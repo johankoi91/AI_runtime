@@ -9,6 +9,7 @@
 
 namespace {
 
+// 这个函数只是为了让 demo 输出更适合肉眼阅读。
 void print_matrix(const runtime::Tensor& tensor) {
   const auto& shape = tensor.shape();
   const float* data = tensor.data<float>();
@@ -25,6 +26,12 @@ void print_matrix(const runtime::Tensor& tensor) {
 }  // namespace
 
 int main() {
+  // 这个 demo 演示的是一条非常小的计算图：
+  //
+  // hidden = a @ b
+  // out = hidden + bias
+  //
+  // 它能帮助你把 Tensor、Graph、Executor、Backend 这些概念一次串起来。
   runtime::Graph graph;
   graph.set_input(
       "a",
@@ -47,13 +54,17 @@ int main() {
       .inputs = {"hidden", "bias"},
   });
 
+  // pool 负责中间结果的内存分配。
   runtime::MemoryPool pool(4 * 1024);
+
+  // backend 决定“用哪个后端来执行图里的 op”。
   runtime::CPUBackend backend;
   runtime::Executor executor(backend);
   executor.run(graph, pool);
 
   const runtime::Tensor& out = graph.tensor("out");
 
+  // debug_string 会把 dtype / shape / strides / contiguous 状态打印出来。
   std::cout << "Backend: " << backend.name() << "\n";
   std::cout << "Output tensor: " << out.debug_string() << "\n";
   std::cout << "Values:\n";

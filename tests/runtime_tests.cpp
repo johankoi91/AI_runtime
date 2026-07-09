@@ -14,6 +14,8 @@
 
 namespace {
 
+// 这是一个非常轻量的测试辅助结构。
+// 它不像 gtest 那么正式，但足够当前学习阶段使用。
 struct TestContext {
   int failures = 0;
 
@@ -34,6 +36,7 @@ struct TestContext {
 };
 
 void test_tensor_basics(TestContext& ctx) {
+  // 这个测试主要验证 Tensor 最基本的元信息是否正确。
   runtime::Tensor tensor = runtime::Tensor::zeros({2, 3});
   ctx.expect_true(tensor.rank() == 2, "tensor rank should be 2");
   ctx.expect_true(tensor.numel() == 6, "tensor numel should be 6");
@@ -44,6 +47,7 @@ void test_tensor_basics(TestContext& ctx) {
 }
 
 void test_add(TestContext& ctx) {
+  // 逐元素加法是最简单的 kernel，适合作为第一个数值正确性测试。
   runtime::Tensor lhs = runtime::Tensor::from_vector({2, 2}, {1.0f, 2.0f, 3.0f, 4.0f});
   runtime::Tensor rhs = runtime::Tensor::from_vector({2, 2}, {5.0f, 6.0f, 7.0f, 8.0f});
 
@@ -56,6 +60,7 @@ void test_add(TestContext& ctx) {
 }
 
 void test_matmul(TestContext& ctx) {
+  // 这里验证的是最小矩阵乘法路径是否正确。
   runtime::Tensor lhs = runtime::Tensor::from_vector({2, 3}, {1, 2, 3, 4, 5, 6});
   runtime::Tensor rhs = runtime::Tensor::from_vector({3, 2}, {1, 2, 3, 4, 5, 6});
 
@@ -70,6 +75,7 @@ void test_matmul(TestContext& ctx) {
 }
 
 void test_memory_pool_reuse(TestContext& ctx) {
+  // 这个测试不关心数值，而是关心 reset 之后是否真的复用了已有 chunk。
   runtime::MemoryPool pool(256);
   runtime::Tensor first = pool.allocate_tensor({4, 4});
   runtime::Tensor second = pool.allocate_tensor({4, 4});
@@ -91,6 +97,8 @@ void test_memory_pool_reuse(TestContext& ctx) {
 }
 
 void test_graph_execution(TestContext& ctx) {
+  // 这个测试把前面的模块串起来：
+  // Tensor -> Graph -> Backend -> Executor -> 输出结果
   runtime::Graph graph;
   graph.set_input(
       "a",
@@ -132,6 +140,7 @@ void test_graph_execution(TestContext& ctx) {
 int main() {
   TestContext ctx;
 
+  // 当前把测试函数们放进一个数组里，顺序执行。
   const std::vector<std::function<void(TestContext&)>> tests = {
       test_tensor_basics,
       test_add,

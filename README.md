@@ -72,6 +72,7 @@ docs/                   学习路线和任务文档
 
 - [Runtime 学习路线图](./docs/runtime-learning-roadmap.md)
 - [第 1 周任务清单](./docs/week-1-task-checklist.md)
+- [源码阅读 Guide](./docs/source-reading-guide.md)
 
 路线图已经按当前仓库状态对齐过了。  
 也就是说，仓库里已经提前有了一部分第 2-3 周的内容，而第 1 周更适合做“补齐缺口、加深理解、增强测试”。
