@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.20)
 
 project(mini_llm_runtime LANGUAGES CXX)
 
+find_package(ZLIB REQUIRED)
+
 if(APPLE)
   enable_language(OBJCXX)
 endif()
@@ -15,6 +17,7 @@ add_library(mini_runtime
   src/memory_pool.cpp
   src/weights.cpp
   src/onnx_weights.cpp
+  src/hush_bundle.cpp
   src/graph.cpp
   src/executor.cpp
   src/backend/cpu_backend.cpp
@@ -36,6 +39,7 @@ endif()
 
 target_include_directories(mini_runtime PUBLIC ${PROJECT_SOURCE_DIR}/include)
 target_compile_features(mini_runtime PUBLIC cxx_std_20)
+target_link_libraries(mini_runtime PRIVATE ZLIB::ZLIB)
 
 if(APPLE)
   target_link_libraries(mini_runtime PRIVATE "-framework Metal" "-framework Foundation")

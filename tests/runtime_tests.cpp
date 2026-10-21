@@ -1,5 +1,6 @@
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
@@ -21,6 +22,9 @@
 #include "runtime/graph.h"
 #include "runtime/kernels.h"
 #include "runtime/onnx_weights.h"
+#include "runtime/hush_bundle.h"
+
+#include <zlib.h>
 #include "runtime/memory_pool.h"
 #include "runtime/tensor.h"
 #include "runtime/weights.h"
@@ -267,6 +271,65 @@ void test_onnx_weights(TestContext& ctx) {
   ctx.expect_close(loaded[0].values[1], -2.0f, 1e-6f, "ONNX reader should decode raw float data");
 }
 
+std::vector<std::uint8_t> gzip_bytes(const std::vector<std::uint8_t>& input) {
+  z_stream stream{};
+  if (deflateInit2(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 16 + MAX_WBITS, 8,
+                   Z_DEFAULT_STRATEGY) != Z_OK) {
+    throw std::runtime_error("could not initialize test gzip encoder");
+  }
+  std::vector<std::uint8_t> output(compressBound(input.size()));
+  stream.next_in = const_cast<Bytef*>(input.data());
+  stream.avail_in = static_cast<uInt>(input.size());
+  stream.next_out = output.data();
+  stream.avail_out = static_cast<uInt>(output.size());
+  if (deflate(&stream, Z_FINISH) != Z_STREAM_END) {
+    deflateEnd(&stream);
+    throw std::runtime_error("could not encode test gzip");
+  }
+  output.resize(stream.total_out);
+  deflateEnd(&stream);
+  return output;
+}
+
+void append_tar_entry(std::vector<std::uint8_t>& tar, const std::string& name, const std::string& content) {
+  std::vector<std::uint8_t> header(512, 0);
+  std::memcpy(header.data(), name.data(), std::min(name.size(), std::size_t(100)));
+  std::snprintf(reinterpret_cast<char*>(header.data() + 100), 8, "%07o", 0644);
+  std::snprintf(reinterpret_cast<char*>(header.data() + 108), 8, "%07o", 0);
+  std::snprintf(reinterpret_cast<char*>(header.data() + 116), 8, "%07o", 0);
+  std::snprintf(reinterpret_cast<char*>(header.data() + 124), 12, "%011zo", content.size());
+  std::snprintf(reinterpret_cast<char*>(header.data() + 136), 12, "%011o", 0);
+  header[156] = '0';
+  std::memcpy(header.data() + 257, "ustar\0", 6);
+  std::memcpy(header.data() + 263, "00", 2);
+  std::fill(header.begin() + 148, header.begin() + 156, ' ');
+  unsigned checksum = 0;
+  for (std::uint8_t value : header) checksum += value;
+  std::snprintf(reinterpret_cast<char*>(header.data() + 148), 8, "%06o ", checksum);
+  tar.insert(tar.end(), header.begin(), header.end());
+  tar.insert(tar.end(), content.begin(), content.end());
+  tar.resize((tar.size() + 511) / 512 * 512, 0);
+}
+
+void test_hush_bundle(TestContext& ctx) {
+  std::vector<std::uint8_t> tar;
+  append_tar_entry(tar, "enc.onnx", "encoder");
+  append_tar_entry(tar, "config.ini", "[df]\nsr=16000\n");
+  tar.resize(tar.size() + 1024, 0);
+  const std::string path = "/tmp/mini-runtime-stage10-model.tar.gz";
+  const auto compressed = gzip_bytes(tar);
+  std::ofstream file(path, std::ios::binary | std::ios::trunc);
+  file.write(reinterpret_cast<const char*>(compressed.data()), static_cast<std::streamsize>(compressed.size()));
+  file.close();
+  const runtime::HushModelBundle bundle = runtime::HushModelBundle::read(path);
+  ctx.expect_true(bundle.entries().size() == 2, "Hush bundle should list regular files");
+  ctx.expect_true(bundle.has("enc.onnx"), "Hush bundle should contain encoder model");
+  const auto& config = bundle.entry("config.ini");
+  const std::string config_text(reinterpret_cast<const char*>(config.data()), config.size());
+  ctx.expect_true(config.size() == 14, "Hush bundle should preserve config length");
+  ctx.expect_true(config_text == "[df]\nsr=16000\n", "Hush bundle should preserve config bytes");
+}
+
 }  // namespace
 
 int main() {
@@ -290,6 +353,7 @@ int main() {
       {"weight_file", test_weight_file},
       {"spectral_round_trip", test_spectral_round_trip},
       {"onnx_weights", test_onnx_weights},
+      {"hush_bundle", test_hush_bundle},
   };
 
   int passed_tests = 0;
