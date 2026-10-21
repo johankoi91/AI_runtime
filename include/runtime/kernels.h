@@ -26,5 +26,12 @@ Tensor gru_step(
     const Tensor& hidden_weights,
     const Tensor& bias,
     MemoryPool* pool = nullptr);
+Tensor conv2d(
+    const Tensor& input,
+    const Tensor& weights,
+    const Tensor& bias,
+    std::size_t stride,
+    std::size_t padding,
+    MemoryPool* pool = nullptr);
 
 }  // namespace runtime::cpu

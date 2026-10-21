@@ -117,5 +117,21 @@ int main() {
     return 1;
   }
   std::cout << "Metal GRU test passed (max error=" << max_error << ")\n";
+
+  runtime::Tensor conv_input = runtime::Tensor::from_vector(
+      {1, 1, 3, 3}, {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f, 9.0f});
+  runtime::Tensor conv_weights = runtime::Tensor::from_vector({1, 1, 2, 2}, {1.0f, -1.0f, 0.5f, 2.0f});
+  runtime::Tensor conv_bias = runtime::Tensor::from_vector({1}, {0.25f});
+  runtime::Tensor gpu_conv = backend.conv2d(conv_input, conv_weights, conv_bias, 1, 1, pool);
+  runtime::Tensor cpu_conv = runtime::cpu::conv2d(conv_input, conv_weights, conv_bias, 1, 1);
+  max_error = 0.0f;
+  for (std::size_t index = 0; index < gpu_conv.numel(); ++index) {
+    max_error = std::max(max_error, std::fabs(gpu_conv.data<float>()[index] - cpu_conv.data<float>()[index]));
+  }
+  if (max_error > 1e-6f) {
+    std::cerr << "Metal Conv2D mismatch: max error=" << max_error << "\n";
+    return 1;
+  }
+  std::cout << "Metal Conv2D test passed (max error=" << max_error << ")\n";
   return 0;
 }

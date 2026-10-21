@@ -35,6 +35,13 @@ class MetalBackend final : public Backend {
       const Tensor& hidden_weights,
       const Tensor& bias,
       MemoryPool& pool) const;
+  Tensor conv2d(
+      const Tensor& input,
+      const Tensor& weights,
+      const Tensor& bias,
+      std::size_t stride,
+      std::size_t padding,
+      MemoryPool& pool) const;
   void set_trace_sink(TraceSink* sink) const override;
 
  private:
