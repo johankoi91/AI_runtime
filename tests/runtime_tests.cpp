@@ -21,6 +21,7 @@
 #include "runtime/memory_pool.h"
 #include "runtime/tensor.h"
 #include "runtime/weights.h"
+#include "runtime/spectral.h"
 
 namespace {
 
@@ -204,6 +205,21 @@ void test_weight_file(TestContext& ctx) {
   ctx.expect_close(actual[1].values[3], 4.0f, 1e-6f, "weight tensor value should round-trip");
 }
 
+void test_spectral_round_trip(TestContext& ctx) {
+  std::vector<float> samples(640);
+  for (std::size_t index = 0; index < samples.size(); ++index) {
+    samples[index] = 0.4f * std::sin(static_cast<float>(index) * 0.17f);
+  }
+  const runtime::Spectrogram spectrogram = runtime::stft(samples, 320, 160);
+  ctx.expect_true(spectrogram.bins == 161, "stft should produce 161 positive-frequency bins");
+  ctx.expect_true(spectrogram.original_samples == samples.size(), "stft should preserve sample count");
+  const std::vector<float> reconstructed = runtime::istft(spectrogram);
+  ctx.expect_true(reconstructed.size() == samples.size(), "istft should restore sample count");
+  for (std::size_t index = 20; index + 20 < samples.size(); ++index) {
+    ctx.expect_close(reconstructed[index], samples[index], 2e-4f, "stft/istft sample");
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -225,6 +241,7 @@ int main() {
       {"graph_execution", test_graph_execution},
       {"audio_stream", test_audio_stream},
       {"weight_file", test_weight_file},
+      {"spectral_round_trip", test_spectral_round_trip},
   };
 
   int passed_tests = 0;

@@ -18,6 +18,10 @@
 - Hush 接入阶段 1：
   - 16 kHz 单声道流式音频帧和 10 ms 分帧队列
   - 带 shape/name/value 校验的 float32 权重文件基础格式
+- Hush 接入阶段 2：
+  - 320 点 FFT、160 点 hop 的复数 STFT
+  - Hann 窗口和重叠相加 ISTFT
+  - CPU 参考实现，供后续 Metal 算子逐点对齐
 
 - `Tensor`
   - `float32`
@@ -136,7 +140,7 @@ ctest --test-dir build-stage --output-on-failure
 git diff --check
 ```
 
-阶段 1 额外覆盖音频帧边界、音频格式、权重文件 round-trip 和权重元数据校验。后续阶段会在这组基础检查上增加 STFT、模型算子和 Hush 参考输出对齐测试。
+阶段 1 额外覆盖音频帧边界、音频格式、权重文件 round-trip 和权重元数据校验。阶段 2 增加 STFT/ISTFT 的 bin 数、采样数和有效重叠区 round-trip 检查。后续阶段会在这组基础检查上增加模型算子和 Hush 参考输出对齐测试。
 
 ## 当前能力边界
 
