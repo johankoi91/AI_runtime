@@ -51,6 +51,32 @@ kernel void matmul_kernel(
   }
   out[row * params.n + col] = sum;
 }
+
+kernel void stft_kernel(
+    device const float* samples [[buffer(0)]],
+    device float* output [[buffer(1)]],
+    constant uint& sample_count [[buffer(2)]],
+    constant uint& fft_size [[buffer(3)]],
+    constant uint& hop_size [[buffer(4)]],
+    constant uint& bins [[buffer(5)]],
+    uint index [[thread_position_in_grid]]) {
+  const uint frame = index / bins;
+  const uint bin = index % bins;
+  const float pi = 3.14159265358979323846f;
+  float real_sum = 0.0f;
+  float imag_sum = 0.0f;
+  for (uint sample_index = 0; sample_index < fft_size; ++sample_index) {
+    const uint input_index = frame * hop_size + sample_index;
+    const float sample = input_index < sample_count ? samples[input_index] : 0.0f;
+    const float window = 0.5f * (1.0f - cos(2.0f * pi * sample_index / fft_size));
+    const float angle = -2.0f * pi * bin * sample_index / fft_size;
+    real_sum += sample * window * cos(angle);
+    imag_sum += sample * window * sin(angle);
+  }
+  const uint output_index = (frame * bins + bin) * 2;
+  output[output_index] = real_sum;
+  output[output_index + 1] = imag_sum;
+}
 )metal";
 
 void check_status(id<MTLCommandBuffer> command_buffer, const char* operation) {
@@ -79,6 +105,7 @@ struct MetalBackend::Impl {
   id<MTLCommandQueue> queue = nil;
   id<MTLComputePipelineState> add_pipeline = nil;
   id<MTLComputePipelineState> matmul_pipeline = nil;
+  id<MTLComputePipelineState> stft_pipeline = nil;
   TraceSink* trace = nullptr;
 };
 
@@ -104,6 +131,7 @@ MetalBackend::MetalBackend() : impl_(std::make_unique<Impl>()) {
 
   id<MTLFunction> add_function = [library newFunctionWithName:@"add_kernel"];
   id<MTLFunction> matmul_function = [library newFunctionWithName:@"matmul_kernel"];
+  id<MTLFunction> stft_function = [library newFunctionWithName:@"stft_kernel"];
   impl_->add_pipeline = [impl_->device newComputePipelineStateWithFunction:add_function error:&error];
   if (impl_->add_pipeline == nil) {
     throw std::runtime_error("MetalBackend: failed to create add pipeline");
@@ -112,6 +140,11 @@ MetalBackend::MetalBackend() : impl_(std::make_unique<Impl>()) {
       [impl_->device newComputePipelineStateWithFunction:matmul_function error:&error];
   if (impl_->matmul_pipeline == nil) {
     throw std::runtime_error("MetalBackend: failed to create matmul pipeline");
+  }
+  impl_->stft_pipeline =
+      [impl_->device newComputePipelineStateWithFunction:stft_function error:&error];
+  if (impl_->stft_pipeline == nil) {
+    throw std::runtime_error("MetalBackend: failed to create stft pipeline");
   }
 }
 
@@ -126,7 +159,7 @@ void MetalBackend::set_trace_sink(TraceSink* sink) const {
   if (impl_->trace != nullptr) {
     impl_->trace->emit("metal", "device_ready", "Apple Metal device=" +
         std::string(impl_->device.name.UTF8String));
-    impl_->trace->emit("metal", "pipeline_ready", "matmul_kernel/add_kernel compiled");
+    impl_->trace->emit("metal", "pipeline_ready", "matmul_kernel/add_kernel/stft_kernel compiled");
   }
 }
 
@@ -273,6 +306,50 @@ Tensor MetalBackend::matmul(
   if (impl_->trace != nullptr) {
     impl_->trace->emit("metal", "copy_back_completed", "matmul output to Tensor", output.nbytes());
   }
+  return output;
+}
+
+Tensor MetalBackend::stft(
+    const Tensor& samples,
+    std::size_t fft_size,
+    std::size_t hop_size,
+    MemoryPool& pool) const {
+  if (samples.dtype() != DType::Float32 || samples.rank() != 1 || !samples.is_contiguous()) {
+    throw std::runtime_error("metal::stft requires a contiguous float32 vector");
+  }
+  if (fft_size == 0 || hop_size == 0 || hop_size > fft_size) {
+    throw std::runtime_error("metal::stft requires fft_size >= hop_size > 0");
+  }
+  const std::size_t frames = samples.numel() <= fft_size
+      ? 1
+      : (samples.numel() - fft_size + hop_size - 1) / hop_size + 1;
+  const std::size_t bins = fft_size / 2 + 1;
+  Tensor output = pool.allocate_tensor({frames, bins, 2}, DType::Float32);
+  id<MTLBuffer> input_buffer = make_input_buffer(impl_->device, samples);
+  id<MTLBuffer> output_buffer =
+      [impl_->device newBufferWithLength:output.nbytes() options:MTLResourceStorageModeShared];
+  const uint32_t sample_count = static_cast<uint32_t>(samples.numel());
+  const uint32_t fft = static_cast<uint32_t>(fft_size);
+  const uint32_t hop = static_cast<uint32_t>(hop_size);
+  const uint32_t bin_count = static_cast<uint32_t>(bins);
+  id<MTLCommandBuffer> command_buffer = [impl_->queue commandBuffer];
+  id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
+  [encoder setComputePipelineState:impl_->stft_pipeline];
+  [encoder setBuffer:input_buffer offset:0 atIndex:0];
+  [encoder setBuffer:output_buffer offset:0 atIndex:1];
+  [encoder setBytes:&sample_count length:sizeof(sample_count) atIndex:2];
+  [encoder setBytes:&fft length:sizeof(fft) atIndex:3];
+  [encoder setBytes:&hop length:sizeof(hop) atIndex:4];
+  [encoder setBytes:&bin_count length:sizeof(bin_count) atIndex:5];
+  const NSUInteger count = frames * bins;
+  const NSUInteger threads = std::min<NSUInteger>(
+      impl_->stft_pipeline.maxTotalThreadsPerThreadgroup, 256);
+  [encoder dispatchThreads:MTLSizeMake(count, 1, 1)
+      threadsPerThreadgroup:MTLSizeMake(threads, 1, 1)];
+  [encoder endEncoding];
+  [command_buffer commit];
+  check_status(command_buffer, "metal::stft");
+  copy_output(output_buffer, output);
   return output;
 }
 

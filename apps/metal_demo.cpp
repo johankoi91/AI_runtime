@@ -1,4 +1,5 @@
 #include <cmath>
+#include <algorithm>
 #include <iostream>
 
 #include "runtime/executor.h"
@@ -6,6 +7,7 @@
 #include "runtime/influxdb_sink.h"
 #include "runtime/memory_pool.h"
 #include "runtime/metal_backend.h"
+#include "runtime/spectral.h"
 
 int main() {
   runtime::Graph graph;
@@ -47,5 +49,26 @@ int main() {
   std::cout << "GPU graph result: [" << output[0] << ", " << output[1] << ", "
             << output[2] << ", " << output[3] << "]\n";
   std::cout << "Metal GPU test passed\n";
+
+  std::vector<float> waveform(640);
+  for (std::size_t index = 0; index < waveform.size(); ++index) {
+    waveform[index] = 0.4f * std::sin(static_cast<float>(index) * 0.17f);
+  }
+  runtime::Tensor waveform_tensor = runtime::Tensor::from_vector({waveform.size()}, waveform);
+  runtime::Tensor gpu_spectrogram = backend.stft(waveform_tensor, 320, 160, pool);
+  runtime::Spectrogram cpu_spectrogram = runtime::stft(waveform, 320, 160);
+  const float* gpu_values = gpu_spectrogram.data<float>();
+  float max_error = 0.0f;
+  for (std::size_t index = 0; index < cpu_spectrogram.values.size() * 2; ++index) {
+    const float expected = index % 2 == 0
+        ? cpu_spectrogram.values[index / 2].real
+        : cpu_spectrogram.values[index / 2].imag;
+    max_error = std::max(max_error, std::fabs(gpu_values[index] - expected));
+  }
+  if (max_error > 1e-3f) {
+    std::cerr << "Metal STFT mismatch: max error=" << max_error << "\n";
+    return 1;
+  }
+  std::cout << "Metal STFT test passed (max error=" << max_error << ")\n";
   return 0;
 }

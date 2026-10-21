@@ -22,6 +22,9 @@
   - 320 点 FFT、160 点 hop 的复数 STFT
   - Hann 窗口和重叠相加 ISTFT
   - CPU 参考实现，供后续 Metal 算子逐点对齐
+- Hush 接入阶段 3：
+  - Metal STFT kernel
+  - CPU/Metal 频谱逐元素误差验证
 
 - `Tensor`
   - `float32`
@@ -140,7 +143,7 @@ ctest --test-dir build-stage --output-on-failure
 git diff --check
 ```
 
-阶段 1 额外覆盖音频帧边界、音频格式、权重文件 round-trip 和权重元数据校验。阶段 2 增加 STFT/ISTFT 的 bin 数、采样数和有效重叠区 round-trip 检查。后续阶段会在这组基础检查上增加模型算子和 Hush 参考输出对齐测试。
+阶段 1 额外覆盖音频帧边界、音频格式、权重文件 round-trip 和权重元数据校验。阶段 2 增加 STFT/ISTFT 的 bin 数、采样数和有效重叠区 round-trip 检查。阶段 3 增加 CPU/Metal STFT 最大误差检查，本机验证值为 `0.000154613`。后续阶段会在这组基础检查上增加模型算子和 Hush 参考输出对齐测试。
 
 ## 当前能力边界
 

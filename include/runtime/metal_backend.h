@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <memory>
 
 #include "runtime/backend.h"
@@ -20,6 +21,11 @@ class MetalBackend final : public Backend {
       const Tensor& lhs,
       const Tensor& rhs,
       MemoryPool& pool) const override;
+  Tensor stft(
+      const Tensor& samples,
+      std::size_t fft_size,
+      std::size_t hop_size,
+      MemoryPool& pool) const;
   void set_trace_sink(TraceSink* sink) const override;
 
  private:
