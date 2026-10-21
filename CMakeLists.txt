@@ -9,8 +9,10 @@ endif()
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 add_library(mini_runtime
+  src/audio.cpp
   src/tensor.cpp
   src/memory_pool.cpp
+  src/weights.cpp
   src/graph.cpp
   src/executor.cpp
   src/backend/cpu_backend.cpp

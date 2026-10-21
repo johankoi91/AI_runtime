@@ -14,11 +14,13 @@
 #endif
 
 #include "runtime/cpu_backend.h"
+#include "runtime/audio.h"
 #include "runtime/executor.h"
 #include "runtime/graph.h"
 #include "runtime/kernels.h"
 #include "runtime/memory_pool.h"
 #include "runtime/tensor.h"
+#include "runtime/weights.h"
 
 namespace {
 
@@ -175,6 +177,33 @@ void test_graph_execution(TestContext& ctx) {
   ctx.expect_close(data[3], 104.0f, 1e-5f, "graph out[1,1]");
 }
 
+void test_audio_stream(TestContext& ctx) {
+  runtime::AudioStream stream(runtime::StreamConfig{});
+  stream.push(runtime::AudioFrame::mono_16k(std::vector<float>(159, 0.25f)));
+  ctx.expect_true(!stream.has_frame(), "stream should wait for a complete 10 ms frame");
+  stream.push(runtime::AudioFrame::mono_16k(std::vector<float>(1, 0.5f)));
+  ctx.expect_true(stream.has_frame(), "stream should expose a complete 10 ms frame");
+  runtime::AudioFrame frame = stream.pop();
+  ctx.expect_true(frame.sample_count() == 160, "popped frame should contain 160 samples");
+  ctx.expect_close(frame.samples().front(), 0.25f, 1e-6f, "first audio sample");
+  ctx.expect_close(frame.samples().back(), 0.5f, 1e-6f, "last audio sample");
+  ctx.expect_true(!stream.has_frame(), "stream should consume the popped frame");
+}
+
+void test_weight_file(TestContext& ctx) {
+  const std::string path = "/tmp/mini-runtime-stage1-weights.bin";
+  const std::vector<runtime::WeightTensor> expected = {
+      {.name = "encoder.bias", .shape = {2}, .values = {0.25f, -0.5f}},
+      {.name = "encoder.weight", .shape = {2, 2}, .values = {1.0f, 2.0f, 3.0f, 4.0f}},
+  };
+  runtime::WeightFile::write(path, expected);
+  const std::vector<runtime::WeightTensor> actual = runtime::WeightFile::read(path);
+  ctx.expect_true(actual.size() == expected.size(), "weight tensor count should round-trip");
+  ctx.expect_true(actual[0].name == expected[0].name, "weight tensor name should round-trip");
+  ctx.expect_true(actual[1].shape == expected[1].shape, "weight tensor shape should round-trip");
+  ctx.expect_close(actual[1].values[3], 4.0f, 1e-6f, "weight tensor value should round-trip");
+}
+
 }  // namespace
 
 int main() {
@@ -194,6 +223,8 @@ int main() {
       {"matmul", test_matmul},
       {"memory_pool_reuse", test_memory_pool_reuse},
       {"graph_execution", test_graph_execution},
+      {"audio_stream", test_audio_stream},
+      {"weight_file", test_weight_file},
   };
 
   int passed_tests = 0;

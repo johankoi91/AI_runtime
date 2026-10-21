@@ -15,6 +15,10 @@
 
 目前已经实现：
 
+- Hush 接入阶段 1：
+  - 16 kHz 单声道流式音频帧和 10 ms 分帧队列
+  - 带 shape/name/value 校验的 float32 权重文件基础格式
+
 - `Tensor`
   - `float32`
   - shape、stride、offset
@@ -119,6 +123,20 @@ docs/                   学习路线和任务文档
 3. 写 `docs/tensor-layout-notes.md`
 4. 给 `matmul` 加更完整的错误路径测试
 5. 再进入 blocked `matmul`、benchmark、KV Cache
+
+## Hush Metal 移植阶段自测
+
+每个移植阶段完成后，先运行这一组检查：
+
+```bash
+cmake -S . -B build-stage -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake --build build-stage --parallel
+ctest --test-dir build-stage --output-on-failure
+./build-stage/bin/mini_runtime_metal_demo
+git diff --check
+```
+
+阶段 1 额外覆盖音频帧边界、音频格式、权重文件 round-trip 和权重元数据校验。后续阶段会在这组基础检查上增加 STFT、模型算子和 Hush 参考输出对齐测试。
 
 ## 当前能力边界
 
