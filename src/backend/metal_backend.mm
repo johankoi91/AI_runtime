@@ -237,6 +237,40 @@ kernel void conv_transpose2d_kernel(
   }
   output[index] = value;
 }
+
+kernel void erb_filterbank_kernel(
+    device const float* spectrum [[buffer(0)]],
+    device const float* filterbank [[buffer(1)]],
+    device float* output [[buffer(2)]],
+    constant uint& frames [[buffer(3)]],
+    constant uint& bins [[buffer(4)]],
+    constant uint& bands [[buffer(5)]],
+    uint index [[thread_position_in_grid]]) {
+  if (index >= frames * bands) {
+    return;
+  }
+  const uint frame = index / bands;
+  const uint band = index % bands;
+  float energy = 0.0f;
+  for (uint bin = 0; bin < bins; ++bin) {
+    const uint spectrum_offset = (frame * bins + bin) * 2;
+    const float real = spectrum[spectrum_offset];
+    const float imag = spectrum[spectrum_offset + 1];
+    energy += filterbank[band * bins + bin] * (real * real + imag * imag);
+  }
+  output[index] = log(max(energy, 1e-12f));
+}
+
+kernel void exponential_unit_norm_kernel(
+    device const float* input [[buffer(0)]],
+    device float* output [[buffer(1)]],
+    constant uint& count [[buffer(2)]],
+    constant float& scale [[buffer(3)]],
+    uint index [[thread_position_in_grid]]) {
+  if (index < count) {
+    output[index] = input[index] * scale;
+  }
+}
 )metal";
 
 void check_status(id<MTLCommandBuffer> command_buffer, const char* operation) {
@@ -271,6 +305,8 @@ struct MetalBackend::Impl {
   id<MTLComputePipelineState> gru_pipeline = nil;
   id<MTLComputePipelineState> conv2d_pipeline = nil;
   id<MTLComputePipelineState> conv_transpose2d_pipeline = nil;
+  id<MTLComputePipelineState> erb_pipeline = nil;
+  id<MTLComputePipelineState> norm_pipeline = nil;
   TraceSink* trace = nullptr;
 };
 
@@ -303,6 +339,8 @@ MetalBackend::MetalBackend() : impl_(std::make_unique<Impl>()) {
   id<MTLFunction> conv2d_function = [library newFunctionWithName:@"conv2d_kernel"];
   id<MTLFunction> conv_transpose2d_function =
       [library newFunctionWithName:@"conv_transpose2d_kernel"];
+  id<MTLFunction> erb_function = [library newFunctionWithName:@"erb_filterbank_kernel"];
+  id<MTLFunction> norm_function = [library newFunctionWithName:@"exponential_unit_norm_kernel"];
   impl_->add_pipeline = [impl_->device newComputePipelineStateWithFunction:add_function error:&error];
   if (impl_->add_pipeline == nil) {
     throw std::runtime_error("MetalBackend: failed to create add pipeline");
@@ -338,6 +376,13 @@ MetalBackend::MetalBackend() : impl_(std::make_unique<Impl>()) {
       newComputePipelineStateWithFunction:conv_transpose2d_function error:&error];
   if (impl_->conv_transpose2d_pipeline == nil) {
     throw std::runtime_error("MetalBackend: failed to create conv transpose pipeline");
+  }
+  impl_->erb_pipeline =
+      [impl_->device newComputePipelineStateWithFunction:erb_function error:&error];
+  impl_->norm_pipeline =
+      [impl_->device newComputePipelineStateWithFunction:norm_function error:&error];
+  if (impl_->erb_pipeline == nil || impl_->norm_pipeline == nil) {
+    throw std::runtime_error("MetalBackend: failed to create ERB pipelines");
   }
 }
 
@@ -769,6 +814,85 @@ Tensor MetalBackend::conv_transpose2d(
   [encoder endEncoding];
   [command_buffer commit];
   check_status(command_buffer, "metal::conv_transpose2d");
+  copy_output(output_buffer, output);
+  return output;
+}
+
+Tensor MetalBackend::erb_filterbank(
+    const Tensor& spectrum,
+    const Tensor& filterbank,
+    MemoryPool& pool) const {
+  if (spectrum.dtype() != DType::Float32 || filterbank.dtype() != DType::Float32 ||
+      !spectrum.is_contiguous() || !filterbank.is_contiguous() || spectrum.rank() != 3 ||
+      filterbank.rank() != 2 || spectrum.shape()[2] != 2 ||
+      filterbank.shape()[1] != spectrum.shape()[1]) {
+    throw std::invalid_argument("metal::erb_filterbank has invalid tensor shapes");
+  }
+  const std::size_t frames = spectrum.shape()[0];
+  const std::size_t bins = spectrum.shape()[1];
+  const std::size_t bands = filterbank.shape()[0];
+  Tensor output = pool.allocate_tensor({frames, bands}, DType::Float32);
+  id<MTLBuffer> spectrum_buffer = make_input_buffer(impl_->device, spectrum);
+  id<MTLBuffer> filterbank_buffer = make_input_buffer(impl_->device, filterbank);
+  id<MTLBuffer> output_buffer =
+      [impl_->device newBufferWithLength:output.nbytes() options:MTLResourceStorageModeShared];
+  const uint32_t frame_count = static_cast<uint32_t>(frames);
+  const uint32_t bin_count = static_cast<uint32_t>(bins);
+  const uint32_t band_count = static_cast<uint32_t>(bands);
+  id<MTLCommandBuffer> command_buffer = [impl_->queue commandBuffer];
+  id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
+  [encoder setComputePipelineState:impl_->erb_pipeline];
+  [encoder setBuffer:spectrum_buffer offset:0 atIndex:0];
+  [encoder setBuffer:filterbank_buffer offset:0 atIndex:1];
+  [encoder setBuffer:output_buffer offset:0 atIndex:2];
+  [encoder setBytes:&frame_count length:sizeof(frame_count) atIndex:3];
+  [encoder setBytes:&bin_count length:sizeof(bin_count) atIndex:4];
+  [encoder setBytes:&band_count length:sizeof(band_count) atIndex:5];
+  const NSUInteger threads = std::min<NSUInteger>(impl_->erb_pipeline.maxTotalThreadsPerThreadgroup, 256);
+  [encoder dispatchThreads:MTLSizeMake(frames * bands, 1, 1)
+      threadsPerThreadgroup:MTLSizeMake(threads, 1, 1)];
+  [encoder endEncoding];
+  [command_buffer commit];
+  check_status(command_buffer, "metal::erb_filterbank");
+  copy_output(output_buffer, output);
+  return output;
+}
+
+Tensor MetalBackend::exponential_unit_norm(
+    const Tensor& input,
+    float& running_energy,
+    float alpha,
+    MemoryPool& pool) const {
+  if (input.dtype() != DType::Float32 || !input.is_contiguous() || input.rank() != 1 ||
+      !(alpha > 0.0f && alpha <= 1.0f)) {
+    throw std::invalid_argument("metal::exponential_unit_norm has invalid input");
+  }
+  float energy = 0.0f;
+  for (std::size_t index = 0; index < input.numel(); ++index) {
+    const float value = input.data<float>()[index];
+    energy += value * value;
+  }
+  energy /= static_cast<float>(std::max<std::size_t>(input.numel(), 1));
+  running_energy = (1.0f - alpha) * running_energy + alpha * energy;
+  const float scale = 1.0f / std::sqrt(std::max(running_energy, 1e-12f));
+  Tensor output = pool.allocate_tensor(input.shape(), DType::Float32);
+  id<MTLBuffer> input_buffer = make_input_buffer(impl_->device, input);
+  id<MTLBuffer> output_buffer =
+      [impl_->device newBufferWithLength:output.nbytes() options:MTLResourceStorageModeShared];
+  const uint32_t count = static_cast<uint32_t>(input.numel());
+  id<MTLCommandBuffer> command_buffer = [impl_->queue commandBuffer];
+  id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
+  [encoder setComputePipelineState:impl_->norm_pipeline];
+  [encoder setBuffer:input_buffer offset:0 atIndex:0];
+  [encoder setBuffer:output_buffer offset:0 atIndex:1];
+  [encoder setBytes:&count length:sizeof(count) atIndex:2];
+  [encoder setBytes:&scale length:sizeof(scale) atIndex:3];
+  const NSUInteger threads = std::min<NSUInteger>(impl_->norm_pipeline.maxTotalThreadsPerThreadgroup, 256);
+  [encoder dispatchThreads:MTLSizeMake(count, 1, 1)
+      threadsPerThreadgroup:MTLSizeMake(threads, 1, 1)];
+  [encoder endEncoding];
+  [command_buffer commit];
+  check_status(command_buffer, "metal::exponential_unit_norm");
   copy_output(output_buffer, output);
   return output;
 }

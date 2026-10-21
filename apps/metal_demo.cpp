@@ -150,5 +150,35 @@ int main() {
     return 1;
   }
   std::cout << "Metal ConvTranspose2D test passed (max error=" << max_error << ")\n";
+  runtime::Tensor erb_spectrum = runtime::Tensor::from_vector(
+      {1, 3, 2}, {1.0f, 0.0f, 0.0f, 2.0f, 2.0f, 1.0f});
+  runtime::Tensor erb_filterbank = runtime::Tensor::from_vector(
+      {2, 3}, {1.0f, 0.5f, 0.0f, 0.0f, 1.0f, 1.0f});
+  runtime::Tensor gpu_erb = backend.erb_filterbank(erb_spectrum, erb_filterbank, pool);
+  runtime::Tensor cpu_erb = runtime::cpu::erb_filterbank(erb_spectrum, erb_filterbank);
+  max_error = 0.0f;
+  for (std::size_t index = 0; index < gpu_erb.numel(); ++index) {
+    max_error = std::max(max_error, std::fabs(gpu_erb.data<float>()[index] - cpu_erb.data<float>()[index]));
+  }
+  if (max_error > 1e-6f) {
+    std::cerr << "Metal ERB mismatch: max error=" << max_error << "\n";
+    return 1;
+  }
+  std::cout << "Metal ERB test passed (max error=" << max_error << ")\n";
+
+  runtime::Tensor norm_input = runtime::Tensor::from_vector({4}, {1.0f, -2.0f, 0.5f, 1.5f});
+  float cpu_energy = 0.0f;
+  float gpu_energy = 0.0f;
+  runtime::Tensor cpu_norm = runtime::cpu::exponential_unit_norm(norm_input, cpu_energy, 0.25f);
+  runtime::Tensor gpu_norm = backend.exponential_unit_norm(norm_input, gpu_energy, 0.25f, pool);
+  max_error = std::fabs(cpu_energy - gpu_energy);
+  for (std::size_t index = 0; index < gpu_norm.numel(); ++index) {
+    max_error = std::max(max_error, std::fabs(gpu_norm.data<float>()[index] - cpu_norm.data<float>()[index]));
+  }
+  if (max_error > 1e-6f) {
+    std::cerr << "Metal unit norm mismatch: max error=" << max_error << "\n";
+    return 1;
+  }
+  std::cout << "Metal unit norm test passed (max error=" << max_error << ")\n";
   return 0;
 }

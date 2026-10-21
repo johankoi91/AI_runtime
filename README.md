@@ -40,6 +40,10 @@
   - NCHW ConvTranspose2D CPU 参考实现
   - Metal ConvTranspose2D kernel，使用 PyTorch 常见权重布局
   - CPU/Metal ConvTranspose2D 数值对齐
+- Hush 接入阶段 8：
+  - ERB filterbank 能量投影和 log 特征
+  - ExponentialUnitNorm 运行能量状态
+  - CPU/Metal ERB 与归一化数值对齐
 
 - `Tensor`
   - `float32`
@@ -158,7 +162,7 @@ ctest --test-dir build-stage --output-on-failure
 git diff --check
 ```
 
-阶段 1 额外覆盖音频帧边界、音频格式、权重文件 round-trip 和权重元数据校验。阶段 2 增加 STFT/ISTFT 的 bin 数、采样数和有效重叠区 round-trip 检查。阶段 3 增加 CPU/Metal STFT 最大误差检查，本机验证值为 `0.000154613`。阶段 4 增加 CPU/Metal sigmoid/tanh 对齐检查，本机最大误差为 `1.19e-7`。阶段 5 增加单步 GRU 对齐检查，本机最大误差为 `4.47e-8`。阶段 6 增加 Conv2D 对齐检查，本机最大误差为 `0`。阶段 7 增加 ConvTranspose2D 对齐检查，本机最大误差为 `0`。后续阶段会在这组基础检查上增加模型算子和 Hush 参考输出对齐测试。
+阶段 1 额外覆盖音频帧边界、音频格式、权重文件 round-trip 和权重元数据校验。阶段 2 增加 STFT/ISTFT 的 bin 数、采样数和有效重叠区 round-trip 检查。阶段 3 增加 CPU/Metal STFT 最大误差检查，本机验证值为 `0.000154613`。阶段 4 增加 CPU/Metal sigmoid/tanh 对齐检查，本机最大误差为 `1.19e-7`。阶段 5 增加单步 GRU 对齐检查，本机最大误差为 `4.47e-8`。阶段 6 增加 Conv2D 对齐检查，本机最大误差为 `0`。阶段 7 增加 ConvTranspose2D 对齐检查，本机最大误差为 `0`。阶段 8 增加 ERB 投影和 ExponentialUnitNorm 对齐检查，最大误差分别为 `1.19e-7` 和 `0`。后续阶段会在这组基础检查上增加模型算子和 Hush 参考输出对齐测试。
 
 ## 当前能力边界
 

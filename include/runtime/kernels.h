@@ -40,5 +40,14 @@ Tensor conv_transpose2d(
     std::size_t stride,
     std::size_t padding,
     MemoryPool* pool = nullptr);
+Tensor erb_filterbank(
+    const Tensor& spectrum,
+    const Tensor& filterbank,
+    MemoryPool* pool = nullptr);
+Tensor exponential_unit_norm(
+    const Tensor& input,
+    float& running_energy,
+    float alpha,
+    MemoryPool* pool = nullptr);
 
 }  // namespace runtime::cpu

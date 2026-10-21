@@ -49,6 +49,15 @@ class MetalBackend final : public Backend {
       std::size_t stride,
       std::size_t padding,
       MemoryPool& pool) const;
+  Tensor erb_filterbank(
+      const Tensor& spectrum,
+      const Tensor& filterbank,
+      MemoryPool& pool) const;
+  Tensor exponential_unit_norm(
+      const Tensor& input,
+      float& running_energy,
+      float alpha,
+      MemoryPool& pool) const;
   void set_trace_sink(TraceSink* sink) const override;
 
  private:
