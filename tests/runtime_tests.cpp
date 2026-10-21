@@ -23,6 +23,7 @@
 #include "runtime/kernels.h"
 #include "runtime/onnx_weights.h"
 #include "runtime/hush_bundle.h"
+#include "runtime/hush_model.h"
 
 #include <zlib.h>
 #include "runtime/memory_pool.h"
@@ -241,6 +242,10 @@ void append_field(std::vector<std::uint8_t>& message, unsigned field, const std:
   message.insert(message.end(), value.begin(), value.end());
 }
 
+void append_string_field(std::vector<std::uint8_t>& message, unsigned field, const std::string& value) {
+  append_field(message, field, std::vector<std::uint8_t>(value.begin(), value.end()));
+}
+
 void test_onnx_weights(TestContext& ctx) {
   std::vector<std::uint8_t> tensor;
   std::vector<std::uint8_t> dimensions;
@@ -344,6 +349,42 @@ void test_hush_bundle(TestContext& ctx) {
   ctx.expect_true(config_text == "[df]\nsr=16000\n", "Hush bundle should preserve config bytes");
 }
 
+std::vector<std::uint8_t> make_minimal_onnx(const std::string& op_type) {
+  std::vector<std::uint8_t> node;
+  append_field(node, 1, {'x'});
+  append_field(node, 2, {'y'});
+  append_string_field(node, 3, "node");
+  append_string_field(node, 4, op_type);
+  std::vector<std::uint8_t> graph;
+  append_field(graph, 1, node);
+  append_field(graph, 2, {'g'});
+  std::vector<std::uint8_t> model;
+  append_field(model, 7, graph);
+  return model;
+}
+
+void test_hush_model(TestContext& ctx) {
+  std::vector<std::uint8_t> tar;
+  const auto encoder_onnx = make_minimal_onnx("Conv");
+  const auto erb_onnx = make_minimal_onnx("Relu");
+  const auto df_onnx = make_minimal_onnx("GRU");
+  append_tar_entry(tar, "config.ini", "[df]\nsr=16000\n");
+  append_tar_entry(tar, "enc.onnx", std::string(encoder_onnx.begin(), encoder_onnx.end()));
+  append_tar_entry(tar, "erb_dec.onnx", std::string(erb_onnx.begin(), erb_onnx.end()));
+  append_tar_entry(tar, "df_dec.onnx", std::string(df_onnx.begin(), df_onnx.end()));
+  tar.resize(tar.size() + 1024, 0);
+  const std::string path = "/tmp/mini-runtime-stage12-model.tar.gz";
+  const auto compressed = gzip_bytes(tar);
+  std::ofstream file(path, std::ios::binary | std::ios::trunc);
+  file.write(reinterpret_cast<const char*>(compressed.data()), static_cast<std::streamsize>(compressed.size()));
+  file.close();
+  const runtime::HushModel model = runtime::HushModel::load(path);
+  ctx.expect_true(model.config_ini.find("sr=16000") != std::string::npos, "Hush model should load config");
+  ctx.expect_true(model.encoder.nodes[0].op_type == "Conv", "Hush model should load encoder graph");
+  ctx.expect_true(model.erb_decoder.nodes[0].op_type == "Relu", "Hush model should load ERB decoder graph");
+  ctx.expect_true(model.df_decoder.nodes[0].op_type == "GRU", "Hush model should load DF decoder graph");
+}
+
 }  // namespace
 
 int main() {
@@ -368,6 +409,7 @@ int main() {
       {"spectral_round_trip", test_spectral_round_trip},
       {"onnx_weights", test_onnx_weights},
       {"hush_bundle", test_hush_bundle},
+      {"hush_model", test_hush_model},
   };
 
   int passed_tests = 0;

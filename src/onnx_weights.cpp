@@ -224,7 +224,10 @@ std::vector<WeightTensor> OnnxWeights::read_model(const std::string& path) {
 }
 
 OnnxGraph OnnxWeights::read_graph(const std::string& path) {
-  const auto model = read_file(path);
+  return read_graph_bytes(read_file(path));
+}
+
+OnnxGraph OnnxWeights::read_graph_bytes(const std::vector<std::uint8_t>& model) {
   Reader reader{model};
   OnnxGraph graph;
   while (!reader.done()) {

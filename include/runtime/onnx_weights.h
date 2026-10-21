@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <cstdint>
 #include <vector>
 
 #include "runtime/weights.h"
@@ -24,6 +25,7 @@ class OnnxWeights {
  public:
   static std::vector<WeightTensor> read_model(const std::string& path);
   static OnnxGraph read_graph(const std::string& path);
+  static OnnxGraph read_graph_bytes(const std::vector<std::uint8_t>& bytes);
 };
 
 }  // namespace runtime

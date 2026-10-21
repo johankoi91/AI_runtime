@@ -18,6 +18,7 @@ add_library(mini_runtime
   src/weights.cpp
   src/onnx_weights.cpp
   src/hush_bundle.cpp
+  src/hush_model.cpp
   src/graph.cpp
   src/executor.cpp
   src/backend/cpu_backend.cpp
