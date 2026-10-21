@@ -256,6 +256,14 @@ void test_onnx_weights(TestContext& ctx) {
   append_field(tensor, 9, raw);
 
   std::vector<std::uint8_t> graph;
+  std::vector<std::uint8_t> node;
+  append_field(node, 3, {'a', 'd', 'd'});
+  append_field(node, 4, {'A', 'd', 'd'});
+  append_field(node, 1, {'x'});
+  append_field(node, 1, {'y'});
+  append_field(node, 2, {'z'});
+  append_field(graph, 1, node);
+  append_field(graph, 2, {'g', 'r', 'a', 'p', 'h'});
   append_field(graph, 5, tensor);
   std::vector<std::uint8_t> model;
   append_field(model, 7, graph);
@@ -269,6 +277,12 @@ void test_onnx_weights(TestContext& ctx) {
   ctx.expect_true(loaded[0].name == "weight", "ONNX reader should preserve initializer name");
   ctx.expect_true(loaded[0].shape == std::vector<std::size_t>({2, 2}), "ONNX reader should preserve shape");
   ctx.expect_close(loaded[0].values[1], -2.0f, 1e-6f, "ONNX reader should decode raw float data");
+  const runtime::OnnxGraph graph_info = runtime::OnnxWeights::read_graph(path);
+  ctx.expect_true(graph_info.name == "graph", "ONNX reader should preserve graph name");
+  ctx.expect_true(graph_info.nodes.size() == 1, "ONNX reader should preserve node count");
+  ctx.expect_true(graph_info.nodes[0].op_type == "Add", "ONNX reader should preserve node op type");
+  ctx.expect_true(graph_info.nodes[0].inputs.size() == 2 && graph_info.nodes[0].outputs[0] == "z",
+                  "ONNX reader should preserve node inputs and outputs");
 }
 
 std::vector<std::uint8_t> gzip_bytes(const std::vector<std::uint8_t>& input) {

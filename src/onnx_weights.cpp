@@ -168,17 +168,39 @@ WeightTensor parse_tensor(const std::vector<std::uint8_t>& bytes) {
   return tensor;
 }
 
-std::vector<WeightTensor> parse_graph(const std::vector<std::uint8_t>& bytes) {
+std::string parse_string(const std::vector<std::uint8_t>& bytes) {
+  return std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+}
+
+OnnxNode parse_node(const std::vector<std::uint8_t>& bytes) {
   Reader reader{bytes};
-  std::vector<WeightTensor> tensors;
+  OnnxNode node;
   while (!reader.done()) {
     const std::uint64_t key = reader.varint();
     const unsigned field = static_cast<unsigned>(key >> 3);
     const unsigned wire = static_cast<unsigned>(key & 7);
-    if (field == 5 && wire == 2) tensors.push_back(parse_tensor(reader.length_delimited()));
+    if (wire == 2 && field == 1) node.inputs.push_back(parse_string(reader.length_delimited()));
+    else if (wire == 2 && field == 2) node.outputs.push_back(parse_string(reader.length_delimited()));
+    else if (wire == 2 && field == 3) node.name = parse_string(reader.length_delimited());
+    else if (wire == 2 && field == 4) node.op_type = parse_string(reader.length_delimited());
     else reader.skip(wire);
   }
-  return tensors;
+  return node;
+}
+
+OnnxGraph parse_graph(const std::vector<std::uint8_t>& bytes) {
+  Reader reader{bytes};
+  OnnxGraph graph;
+  while (!reader.done()) {
+    const std::uint64_t key = reader.varint();
+    const unsigned field = static_cast<unsigned>(key >> 3);
+    const unsigned wire = static_cast<unsigned>(key & 7);
+    if (field == 1 && wire == 2) graph.nodes.push_back(parse_node(reader.length_delimited()));
+    else if (field == 2 && wire == 2) graph.name = parse_string(reader.length_delimited());
+    else if (field == 5 && wire == 2) graph.initializers.push_back(parse_tensor(reader.length_delimited()));
+    else reader.skip(wire);
+  }
+  return graph;
 }
 
 }  // namespace
@@ -193,12 +215,29 @@ std::vector<WeightTensor> OnnxWeights::read_model(const std::string& path) {
     const unsigned wire = static_cast<unsigned>(key & 7);
     if (field == 7 && wire == 2) {
       const auto graph = parse_graph(reader.length_delimited());
-      tensors.insert(tensors.end(), graph.begin(), graph.end());
+      tensors.insert(tensors.end(), graph.initializers.begin(), graph.initializers.end());
     } else {
       reader.skip(wire);
     }
   }
   return tensors;
+}
+
+OnnxGraph OnnxWeights::read_graph(const std::string& path) {
+  const auto model = read_file(path);
+  Reader reader{model};
+  OnnxGraph graph;
+  while (!reader.done()) {
+    const std::uint64_t key = reader.varint();
+    const unsigned field = static_cast<unsigned>(key >> 3);
+    const unsigned wire = static_cast<unsigned>(key & 7);
+    if (field == 7 && wire == 2) {
+      graph = parse_graph(reader.length_delimited());
+    } else {
+      reader.skip(wire);
+    }
+  }
+  return graph;
 }
 
 }  // namespace runtime
