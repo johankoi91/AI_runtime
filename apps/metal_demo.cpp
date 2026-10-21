@@ -133,5 +133,22 @@ int main() {
     return 1;
   }
   std::cout << "Metal Conv2D test passed (max error=" << max_error << ")\n";
+  runtime::Tensor deconv_input = runtime::Tensor::from_vector({1, 1, 2, 2}, {1.0f, 2.0f, 3.0f, 4.0f});
+  runtime::Tensor deconv_weights = runtime::Tensor::from_vector({1, 1, 2, 2}, {1.0f, 0.5f, -1.0f, 2.0f});
+  runtime::Tensor deconv_bias = runtime::Tensor::from_vector({1}, {0.25f});
+  runtime::Tensor gpu_deconv = backend.conv_transpose2d(
+      deconv_input, deconv_weights, deconv_bias, 2, 0, pool);
+  runtime::Tensor cpu_deconv = runtime::cpu::conv_transpose2d(
+      deconv_input, deconv_weights, deconv_bias, 2, 0);
+  max_error = 0.0f;
+  for (std::size_t index = 0; index < gpu_deconv.numel(); ++index) {
+    max_error = std::max(
+        max_error, std::fabs(gpu_deconv.data<float>()[index] - cpu_deconv.data<float>()[index]));
+  }
+  if (max_error > 1e-6f) {
+    std::cerr << "Metal ConvTranspose2D mismatch: max error=" << max_error << "\n";
+    return 1;
+  }
+  std::cout << "Metal ConvTranspose2D test passed (max error=" << max_error << ")\n";
   return 0;
 }

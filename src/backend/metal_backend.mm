@@ -182,6 +182,61 @@ kernel void conv2d_kernel(
   }
   output[index] = value;
 }
+
+kernel void conv_transpose2d_kernel(
+    device const float* input [[buffer(0)]],
+    device const float* weights [[buffer(1)]],
+    device const float* bias [[buffer(2)]],
+    device float* output [[buffer(3)]],
+    constant uint& batch [[buffer(4)]],
+    constant uint& input_channels [[buffer(5)]],
+    constant uint& input_height [[buffer(6)]],
+    constant uint& input_width [[buffer(7)]],
+    constant uint& output_channels [[buffer(8)]],
+    constant uint& kernel_height [[buffer(9)]],
+    constant uint& kernel_width [[buffer(10)]],
+    constant uint& output_height [[buffer(11)]],
+    constant uint& output_width [[buffer(12)]],
+    constant uint& stride [[buffer(13)]],
+    constant uint& padding [[buffer(14)]],
+    uint index [[thread_position_in_grid]]) {
+  const uint total = batch * output_channels * output_height * output_width;
+  if (index >= total) {
+    return;
+  }
+  uint remainder = index;
+  const uint output_x = remainder % output_width;
+  remainder /= output_width;
+  const uint output_y = remainder % output_height;
+  remainder /= output_height;
+  const uint output_channel = remainder % output_channels;
+  const uint batch_index = remainder / output_channels;
+  float value = bias[output_channel];
+  for (uint input_channel = 0; input_channel < input_channels; ++input_channel) {
+    for (uint kernel_y = 0; kernel_y < kernel_height; ++kernel_y) {
+      for (uint kernel_x = 0; kernel_x < kernel_width; ++kernel_x) {
+        const int raw_y = int(output_y) + int(padding) - int(kernel_y);
+        const int raw_x = int(output_x) + int(padding) - int(kernel_x);
+        if (raw_y < 0 || raw_x < 0 || raw_y % int(stride) != 0 || raw_x % int(stride) != 0) {
+          continue;
+        }
+        const uint input_y = uint(raw_y) / stride;
+        const uint input_x = uint(raw_x) / stride;
+        if (input_y >= input_height || input_x >= input_width) {
+          continue;
+        }
+        const uint input_offset =
+            ((batch_index * input_channels + input_channel) * input_height + input_y) *
+            input_width + input_x;
+        const uint weight_offset =
+            ((input_channel * output_channels + output_channel) * kernel_height + kernel_y) *
+            kernel_width + kernel_x;
+        value += input[input_offset] * weights[weight_offset];
+      }
+    }
+  }
+  output[index] = value;
+}
 )metal";
 
 void check_status(id<MTLCommandBuffer> command_buffer, const char* operation) {
@@ -215,6 +270,7 @@ struct MetalBackend::Impl {
   id<MTLComputePipelineState> tanh_pipeline = nil;
   id<MTLComputePipelineState> gru_pipeline = nil;
   id<MTLComputePipelineState> conv2d_pipeline = nil;
+  id<MTLComputePipelineState> conv_transpose2d_pipeline = nil;
   TraceSink* trace = nullptr;
 };
 
@@ -245,6 +301,8 @@ MetalBackend::MetalBackend() : impl_(std::make_unique<Impl>()) {
   id<MTLFunction> tanh_function = [library newFunctionWithName:@"tanh_kernel"];
   id<MTLFunction> gru_function = [library newFunctionWithName:@"gru_step_kernel"];
   id<MTLFunction> conv2d_function = [library newFunctionWithName:@"conv2d_kernel"];
+  id<MTLFunction> conv_transpose2d_function =
+      [library newFunctionWithName:@"conv_transpose2d_kernel"];
   impl_->add_pipeline = [impl_->device newComputePipelineStateWithFunction:add_function error:&error];
   if (impl_->add_pipeline == nil) {
     throw std::runtime_error("MetalBackend: failed to create add pipeline");
@@ -275,6 +333,11 @@ MetalBackend::MetalBackend() : impl_(std::make_unique<Impl>()) {
       [impl_->device newComputePipelineStateWithFunction:conv2d_function error:&error];
   if (impl_->conv2d_pipeline == nil) {
     throw std::runtime_error("MetalBackend: failed to create conv2d pipeline");
+  }
+  impl_->conv_transpose2d_pipeline = [impl_->device
+      newComputePipelineStateWithFunction:conv_transpose2d_function error:&error];
+  if (impl_->conv_transpose2d_pipeline == nil) {
+    throw std::runtime_error("MetalBackend: failed to create conv transpose pipeline");
   }
 }
 
@@ -643,6 +706,69 @@ Tensor MetalBackend::conv2d(
   [encoder endEncoding];
   [command_buffer commit];
   check_status(command_buffer, "metal::conv2d");
+  copy_output(output_buffer, output);
+  return output;
+}
+
+Tensor MetalBackend::conv_transpose2d(
+    const Tensor& input,
+    const Tensor& weights,
+    const Tensor& bias,
+    std::size_t stride,
+    std::size_t padding,
+    MemoryPool& pool) const {
+  if (stride == 0 || input.dtype() != DType::Float32 || weights.dtype() != DType::Float32 ||
+      bias.dtype() != DType::Float32 || !input.is_contiguous() || !weights.is_contiguous() ||
+      !bias.is_contiguous() || input.rank() != 4 || weights.rank() != 4 || bias.rank() != 1) {
+    throw std::invalid_argument("metal::conv_transpose2d requires contiguous float32 NCHW tensors");
+  }
+  const std::size_t batch = input.shape()[0];
+  const std::size_t input_channels = input.shape()[1];
+  const std::size_t input_height = input.shape()[2];
+  const std::size_t input_width = input.shape()[3];
+  const std::size_t weight_input_channels = weights.shape()[0];
+  const std::size_t output_channels = weights.shape()[1];
+  const std::size_t kernel_height = weights.shape()[2];
+  const std::size_t kernel_width = weights.shape()[3];
+  if (weight_input_channels != input_channels || bias.shape()[0] != output_channels ||
+      (input_height - 1) * stride + kernel_height < 2 * padding ||
+      (input_width - 1) * stride + kernel_width < 2 * padding) {
+    throw std::invalid_argument("metal::conv_transpose2d weight shapes do not match input");
+  }
+  const std::size_t output_height = (input_height - 1) * stride + kernel_height - 2 * padding;
+  const std::size_t output_width = (input_width - 1) * stride + kernel_width - 2 * padding;
+  Tensor output = pool.allocate_tensor(
+      {batch, output_channels, output_height, output_width}, DType::Float32);
+  id<MTLBuffer> input_buffer = make_input_buffer(impl_->device, input);
+  id<MTLBuffer> weights_buffer = make_input_buffer(impl_->device, weights);
+  id<MTLBuffer> bias_buffer = make_input_buffer(impl_->device, bias);
+  id<MTLBuffer> output_buffer =
+      [impl_->device newBufferWithLength:output.nbytes() options:MTLResourceStorageModeShared];
+  const std::uint32_t values[] = {
+      static_cast<std::uint32_t>(batch), static_cast<std::uint32_t>(input_channels),
+      static_cast<std::uint32_t>(input_height), static_cast<std::uint32_t>(input_width),
+      static_cast<std::uint32_t>(output_channels), static_cast<std::uint32_t>(kernel_height),
+      static_cast<std::uint32_t>(kernel_width), static_cast<std::uint32_t>(output_height),
+      static_cast<std::uint32_t>(output_width), static_cast<std::uint32_t>(stride),
+      static_cast<std::uint32_t>(padding)};
+  id<MTLCommandBuffer> command_buffer = [impl_->queue commandBuffer];
+  id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
+  [encoder setComputePipelineState:impl_->conv_transpose2d_pipeline];
+  [encoder setBuffer:input_buffer offset:0 atIndex:0];
+  [encoder setBuffer:weights_buffer offset:0 atIndex:1];
+  [encoder setBuffer:bias_buffer offset:0 atIndex:2];
+  [encoder setBuffer:output_buffer offset:0 atIndex:3];
+  for (NSUInteger index = 0; index < 11; ++index) {
+    [encoder setBytes:&values[index] length:sizeof(values[index]) atIndex:4 + index];
+  }
+  const NSUInteger count = output.numel();
+  const NSUInteger threads = std::min<NSUInteger>(
+      impl_->conv_transpose2d_pipeline.maxTotalThreadsPerThreadgroup, 256);
+  [encoder dispatchThreads:MTLSizeMake(count, 1, 1)
+      threadsPerThreadgroup:MTLSizeMake(threads, 1, 1)];
+  [encoder endEncoding];
+  [command_buffer commit];
+  check_status(command_buffer, "metal::conv_transpose2d");
   copy_output(output_buffer, output);
   return output;
 }
