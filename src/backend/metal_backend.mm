@@ -77,6 +77,26 @@ kernel void stft_kernel(
   output[output_index] = real_sum;
   output[output_index + 1] = imag_sum;
 }
+
+kernel void sigmoid_kernel(
+    device const float* input [[buffer(0)]],
+    device float* output [[buffer(1)]],
+    constant uint& count [[buffer(2)]],
+    uint index [[thread_position_in_grid]]) {
+  if (index < count) {
+    output[index] = 1.0f / (1.0f + exp(-input[index]));
+  }
+}
+
+kernel void tanh_kernel(
+    device const float* input [[buffer(0)]],
+    device float* output [[buffer(1)]],
+    constant uint& count [[buffer(2)]],
+    uint index [[thread_position_in_grid]]) {
+  if (index < count) {
+    output[index] = tanh(input[index]);
+  }
+}
 )metal";
 
 void check_status(id<MTLCommandBuffer> command_buffer, const char* operation) {
@@ -106,6 +126,8 @@ struct MetalBackend::Impl {
   id<MTLComputePipelineState> add_pipeline = nil;
   id<MTLComputePipelineState> matmul_pipeline = nil;
   id<MTLComputePipelineState> stft_pipeline = nil;
+  id<MTLComputePipelineState> sigmoid_pipeline = nil;
+  id<MTLComputePipelineState> tanh_pipeline = nil;
   TraceSink* trace = nullptr;
 };
 
@@ -132,6 +154,8 @@ MetalBackend::MetalBackend() : impl_(std::make_unique<Impl>()) {
   id<MTLFunction> add_function = [library newFunctionWithName:@"add_kernel"];
   id<MTLFunction> matmul_function = [library newFunctionWithName:@"matmul_kernel"];
   id<MTLFunction> stft_function = [library newFunctionWithName:@"stft_kernel"];
+  id<MTLFunction> sigmoid_function = [library newFunctionWithName:@"sigmoid_kernel"];
+  id<MTLFunction> tanh_function = [library newFunctionWithName:@"tanh_kernel"];
   impl_->add_pipeline = [impl_->device newComputePipelineStateWithFunction:add_function error:&error];
   if (impl_->add_pipeline == nil) {
     throw std::runtime_error("MetalBackend: failed to create add pipeline");
@@ -145,6 +169,13 @@ MetalBackend::MetalBackend() : impl_(std::make_unique<Impl>()) {
       [impl_->device newComputePipelineStateWithFunction:stft_function error:&error];
   if (impl_->stft_pipeline == nil) {
     throw std::runtime_error("MetalBackend: failed to create stft pipeline");
+  }
+  impl_->sigmoid_pipeline =
+      [impl_->device newComputePipelineStateWithFunction:sigmoid_function error:&error];
+  impl_->tanh_pipeline =
+      [impl_->device newComputePipelineStateWithFunction:tanh_function error:&error];
+  if (impl_->sigmoid_pipeline == nil || impl_->tanh_pipeline == nil) {
+    throw std::runtime_error("MetalBackend: failed to create activation pipelines");
   }
 }
 
@@ -351,6 +382,52 @@ Tensor MetalBackend::stft(
   check_status(command_buffer, "metal::stft");
   copy_output(output_buffer, output);
   return output;
+}
+
+namespace {
+
+Tensor metal_activation(
+    id<MTLDevice> device,
+    id<MTLCommandQueue> queue,
+    id<MTLComputePipelineState> pipeline,
+    const Tensor& input,
+    MemoryPool& pool,
+    const char* operation) {
+  if (input.dtype() != DType::Float32 || !input.is_contiguous()) {
+    throw std::runtime_error(std::string("metal::") + operation +
+                             " requires a contiguous float32 tensor");
+  }
+  Tensor output = pool.allocate_tensor(input.shape(), input.dtype());
+  id<MTLBuffer> input_buffer = make_input_buffer(device, input);
+  id<MTLBuffer> output_buffer =
+      [device newBufferWithLength:output.nbytes() options:MTLResourceStorageModeShared];
+  const uint32_t count = static_cast<uint32_t>(input.numel());
+  id<MTLCommandBuffer> command_buffer = [queue commandBuffer];
+  id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
+  [encoder setComputePipelineState:pipeline];
+  [encoder setBuffer:input_buffer offset:0 atIndex:0];
+  [encoder setBuffer:output_buffer offset:0 atIndex:1];
+  [encoder setBytes:&count length:sizeof(count) atIndex:2];
+  const NSUInteger threads = std::min<NSUInteger>(pipeline.maxTotalThreadsPerThreadgroup, 256);
+  [encoder dispatchThreads:MTLSizeMake(count, 1, 1)
+      threadsPerThreadgroup:MTLSizeMake(threads, 1, 1)];
+  [encoder endEncoding];
+  [command_buffer commit];
+  check_status(command_buffer, operation);
+  copy_output(output_buffer, output);
+  return output;
+}
+
+}  // namespace
+
+Tensor MetalBackend::sigmoid(const Tensor& input, MemoryPool& pool) const {
+  return metal_activation(
+      impl_->device, impl_->queue, impl_->sigmoid_pipeline, input, pool, "sigmoid");
+}
+
+Tensor MetalBackend::tanh(const Tensor& input, MemoryPool& pool) const {
+  return metal_activation(
+      impl_->device, impl_->queue, impl_->tanh_pipeline, input, pool, "tanh");
 }
 
 }  // namespace runtime

@@ -26,6 +26,8 @@ class MetalBackend final : public Backend {
       std::size_t fft_size,
       std::size_t hop_size,
       MemoryPool& pool) const;
+  Tensor sigmoid(const Tensor& input, MemoryPool& pool) const;
+  Tensor tanh(const Tensor& input, MemoryPool& pool) const;
   void set_trace_sink(TraceSink* sink) const override;
 
  private:

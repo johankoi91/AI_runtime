@@ -17,5 +17,7 @@ namespace runtime::cpu {
 // 3. 执行真正的循环计算
 Tensor add(const Tensor& lhs, const Tensor& rhs, MemoryPool* pool = nullptr);
 Tensor matmul(const Tensor& lhs, const Tensor& rhs, MemoryPool* pool = nullptr);
+Tensor sigmoid(const Tensor& input, MemoryPool* pool = nullptr);
+Tensor tanh(const Tensor& input, MemoryPool* pool = nullptr);
 
 }  // namespace runtime::cpu

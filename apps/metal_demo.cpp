@@ -5,6 +5,7 @@
 #include "runtime/executor.h"
 #include "runtime/graph.h"
 #include "runtime/influxdb_sink.h"
+#include "runtime/kernels.h"
 #include "runtime/memory_pool.h"
 #include "runtime/metal_backend.h"
 #include "runtime/spectral.h"
@@ -70,5 +71,26 @@ int main() {
     return 1;
   }
   std::cout << "Metal STFT test passed (max error=" << max_error << ")\n";
+
+  runtime::Tensor activation_input =
+      runtime::Tensor::from_vector({4}, {-2.0f, -0.25f, 0.5f, 2.0f});
+  runtime::Tensor gpu_sigmoid = backend.sigmoid(activation_input, pool);
+  runtime::Tensor gpu_tanh = backend.tanh(activation_input, pool);
+  runtime::Tensor cpu_sigmoid = runtime::cpu::sigmoid(activation_input);
+  runtime::Tensor cpu_tanh = runtime::cpu::tanh(activation_input);
+  const float* gpu_sigmoid_data = gpu_sigmoid.data<float>();
+  const float* gpu_tanh_data = gpu_tanh.data<float>();
+  const float* cpu_sigmoid_data = cpu_sigmoid.data<float>();
+  const float* cpu_tanh_data = cpu_tanh.data<float>();
+  max_error = 0.0f;
+  for (std::size_t index = 0; index < 4; ++index) {
+    max_error = std::max(max_error, std::fabs(gpu_sigmoid_data[index] - cpu_sigmoid_data[index]));
+    max_error = std::max(max_error, std::fabs(gpu_tanh_data[index] - cpu_tanh_data[index]));
+  }
+  if (max_error > 1e-6f) {
+    std::cerr << "Metal activation mismatch: max error=" << max_error << "\n";
+    return 1;
+  }
+  std::cout << "Metal activation test passed (max error=" << max_error << ")\n";
   return 0;
 }
