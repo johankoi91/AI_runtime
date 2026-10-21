@@ -14,6 +14,7 @@ add_library(mini_runtime
   src/tensor.cpp
   src/memory_pool.cpp
   src/weights.cpp
+  src/onnx_weights.cpp
   src/graph.cpp
   src/executor.cpp
   src/backend/cpu_backend.cpp

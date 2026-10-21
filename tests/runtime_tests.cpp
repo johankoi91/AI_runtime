@@ -1,7 +1,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <exception>
+#include <fstream>
 #include <functional>
 #include <iomanip>
 #include <iostream>
@@ -18,6 +20,7 @@
 #include "runtime/executor.h"
 #include "runtime/graph.h"
 #include "runtime/kernels.h"
+#include "runtime/onnx_weights.h"
 #include "runtime/memory_pool.h"
 #include "runtime/tensor.h"
 #include "runtime/weights.h"
@@ -220,6 +223,50 @@ void test_spectral_round_trip(TestContext& ctx) {
   }
 }
 
+void append_varint(std::vector<std::uint8_t>& bytes, std::uint64_t value) {
+  while (value >= 0x80) {
+    bytes.push_back(static_cast<std::uint8_t>(value) | 0x80);
+    value >>= 7;
+  }
+  bytes.push_back(static_cast<std::uint8_t>(value));
+}
+
+void append_field(std::vector<std::uint8_t>& message, unsigned field, const std::vector<std::uint8_t>& value) {
+  append_varint(message, (static_cast<std::uint64_t>(field) << 3) | 2);
+  append_varint(message, value.size());
+  message.insert(message.end(), value.begin(), value.end());
+}
+
+void test_onnx_weights(TestContext& ctx) {
+  std::vector<std::uint8_t> tensor;
+  std::vector<std::uint8_t> dimensions;
+  append_varint(dimensions, 2);
+  append_varint(dimensions, 2);
+  append_field(tensor, 1, dimensions);
+  append_varint(tensor, (2ull << 3) | 0);
+  append_varint(tensor, 1);
+  append_field(tensor, 8, {'w', 'e', 'i', 'g', 'h', 't'});
+  const float values[] = {1.0f, -2.0f, 3.5f, 4.25f};
+  std::vector<std::uint8_t> raw(sizeof(values));
+  std::memcpy(raw.data(), values, sizeof(values));
+  append_field(tensor, 9, raw);
+
+  std::vector<std::uint8_t> graph;
+  append_field(graph, 5, tensor);
+  std::vector<std::uint8_t> model;
+  append_field(model, 7, graph);
+  const std::string path = "/tmp/mini-runtime-stage9-model.onnx";
+  std::ofstream file(path, std::ios::binary | std::ios::trunc);
+  file.write(reinterpret_cast<const char*>(model.data()), static_cast<std::streamsize>(model.size()));
+  file.close();
+
+  const auto loaded = runtime::OnnxWeights::read_model(path);
+  ctx.expect_true(loaded.size() == 1, "ONNX reader should find one initializer");
+  ctx.expect_true(loaded[0].name == "weight", "ONNX reader should preserve initializer name");
+  ctx.expect_true(loaded[0].shape == std::vector<std::size_t>({2, 2}), "ONNX reader should preserve shape");
+  ctx.expect_close(loaded[0].values[1], -2.0f, 1e-6f, "ONNX reader should decode raw float data");
+}
+
 }  // namespace
 
 int main() {
@@ -242,6 +289,7 @@ int main() {
       {"audio_stream", test_audio_stream},
       {"weight_file", test_weight_file},
       {"spectral_round_trip", test_spectral_round_trip},
+      {"onnx_weights", test_onnx_weights},
   };
 
   int passed_tests = 0;
