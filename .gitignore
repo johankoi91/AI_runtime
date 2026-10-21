@@ -1,3 +1,37 @@
 build/
+build-metal/
 cmake-build-*/
 .DS_Store
+
+# CMake and native build artifacts
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+Makefile
+install_manifest.txt
+*.o
+*.obj
+*.a
+*.so
+*.dylib
+*.dSYM/
+
+# Frontend dependencies and build output
+node_modules/
+node_modules-incomplete/
+dist/
+.vite/
+*.tsbuildinfo
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs and local environment files
+*.log
+.env
+.env.*
+!.env.example

@@ -1,0 +1,31 @@
+services:
+  influxdb:
+    image: dockerproxy.net/library/influxdb:2.7
+    restart: unless-stopped
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: mini-runtime-admin-password
+      DOCKER_INFLUXDB_INIT_ORG: mini-runtime
+      DOCKER_INFLUXDB_INIT_BUCKET: mini-runtime
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: mini-runtime-local-token
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+      - influxdb-config:/etc/influxdb2
+    expose:
+      - "8086"
+    ports:
+      - "127.0.0.1:8086:8086"
+
+  web:
+    image: hub.agoralab.co/rtm/nginx:1.16.0
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./web:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+
+volumes:
+  influxdb-data:
+  influxdb-config:

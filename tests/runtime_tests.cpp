@@ -1,9 +1,17 @@
+#include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <exception>
 #include <functional>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <vector>
+
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
 
 #include "runtime/cpu_backend.h"
 #include "runtime/executor.h"
@@ -14,12 +22,43 @@
 
 namespace {
 
+bool terminal_supports_color() {
+  if (std::getenv("NO_COLOR") != nullptr) {
+    return false;
+  }
+#if defined(_WIN32)
+  return false;
+#else
+  return ::isatty(fileno(stdout)) != 0;
+#endif
+}
+
+std::string colorize(std::string_view text, std::string_view code, bool enabled) {
+  if (!enabled) {
+    return std::string(text);
+  }
+  return "\033[" + std::string(code) + "m" + std::string(text) + "\033[0m";
+}
+
+void print_separator(char ch = '=', int width = 56) {
+  for (int i = 0; i < width; ++i) {
+    std::cout << ch;
+  }
+  std::cout << "\n";
+}
+
+void print_summary_line(std::string_view label, int value) {
+  std::cout << std::left << std::setw(18) << label << ": " << value << "\n";
+}
+
 // 这是一个非常轻量的测试辅助结构。
 // 它不像 gtest 那么正式，但足够当前学习阶段使用。
 struct TestContext {
+  int checks = 0;
   int failures = 0;
 
   void expect_true(bool condition, const std::string& message) {
+    ++checks;
     if (!condition) {
       ++failures;
       std::cerr << "[FAIL] " << message << "\n";
@@ -27,6 +66,7 @@ struct TestContext {
   }
 
   void expect_close(float actual, float expected, float eps, const std::string& message) {
+    ++checks;
     if (std::fabs(actual - expected) > eps) {
       ++failures;
       std::cerr << "[FAIL] " << message << " expected=" << expected
@@ -139,30 +179,82 @@ void test_graph_execution(TestContext& ctx) {
 
 int main() {
   TestContext ctx;
+  const bool use_color = terminal_supports_color();
+  const auto suite_start = std::chrono::steady_clock::now();
 
-  // 当前把测试函数们放进一个数组里，顺序执行。
-  const std::vector<std::function<void(TestContext&)>> tests = {
-      test_tensor_basics,
-      test_add,
-      test_matmul,
-      test_memory_pool_reuse,
-      test_graph_execution,
+  struct TestCase {
+    std::string name;
+    std::function<void(TestContext&)> fn;
   };
 
+  // 当前把测试函数们放进一个数组里，顺序执行。
+  const std::vector<TestCase> tests = {
+      {"tensor_basics", test_tensor_basics},
+      {"add", test_add},
+      {"matmul", test_matmul},
+      {"memory_pool_reuse", test_memory_pool_reuse},
+      {"graph_execution", test_graph_execution},
+  };
+
+  int passed_tests = 0;
+  int failed_tests = 0;
+
+  print_separator();
+  std::cout << colorize("mini-runtime test runner", "1;36", use_color) << "\n";
+  print_separator();
+  std::cout << "total test cases: " << tests.size() << "\n\n";
+
   for (const auto& test : tests) {
+    const int failures_before = ctx.failures;
+    const int checks_before = ctx.checks;
+    const auto start = std::chrono::steady_clock::now();
+
+    std::cout << colorize("[RUN ]", "1;34", use_color) << " " << test.name << "\n";
+
     try {
-      test(ctx);
+      test.fn(ctx);
     } catch (const std::exception& ex) {
       ++ctx.failures;
       std::cerr << "[FAIL] unexpected exception: " << ex.what() << "\n";
     }
+
+    const auto end = std::chrono::steady_clock::now();
+    const auto elapsed_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    const int checks_in_test = ctx.checks - checks_before;
+    const int failures_in_test = ctx.failures - failures_before;
+
+    if (failures_in_test == 0) {
+      ++passed_tests;
+      std::cout << colorize("[PASS]", "1;32", use_color) << " " << test.name << " (" << checks_in_test
+                << " checks, " << elapsed_ms << " ms)\n\n";
+    } else {
+      ++failed_tests;
+      std::cout << colorize("[FAIL]", "1;31", use_color) << " " << test.name << " (" << failures_in_test
+                << " failures, " << checks_in_test << " checks, "
+                << elapsed_ms << " ms)\n\n";
+    }
   }
 
+  const auto suite_end = std::chrono::steady_clock::now();
+  const auto total_ms =
+      std::chrono::duration_cast<std::chrono::milliseconds>(suite_end - suite_start).count();
+
+  print_separator();
+  std::cout << colorize("summary", "1;36", use_color) << "\n";
+  print_separator();
+  print_summary_line("passed tests", passed_tests);
+  print_summary_line("failed tests", failed_tests);
+  print_summary_line("total checks", ctx.checks);
+  print_summary_line("total time (ms)", static_cast<int>(total_ms));
+  print_separator('-');
+
   if (ctx.failures == 0) {
-    std::cout << "All mini runtime tests passed.\n";
+    std::cout << colorize("All mini runtime tests passed.", "1;32", use_color) << "\n";
     return 0;
   }
 
-  std::cerr << ctx.failures << " test checks failed.\n";
+  std::cerr << colorize("Some mini runtime checks failed.", "1;31", use_color)
+            << " total failing checks: " << ctx.failures << "\n";
   return 1;
 }

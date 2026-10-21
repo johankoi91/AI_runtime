@@ -56,6 +56,39 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
+### 在 macOS 上运行 Metal GPU demo
+
+Apple Silicon 上可以用 Metal backend 执行当前支持的 `add` 和 `matmul`：
+
+```bash
+cmake -S . -B build-metal -DCMAKE_BUILD_TYPE=Release
+cmake --build build-metal --parallel
+./build-metal/bin/mini_runtime_metal_demo
+```
+
+这个 demo 会执行 `matmul -> add` 图，并校验 GPU 输出为 `[32, 48, 79, 104]`。
+
+### 使用远端 InfluxDB 记录真实运行事件
+
+远端部署完成后，本地 M2 demo 可以把 Metal 事件写入远端：
+
+```bash
+INFLUXDB_URL=http://81.71.150.26/influx \
+INFLUXDB_ORG=mini-runtime \
+INFLUXDB_BUCKET=mini-runtime \
+INFLUXDB_TOKEN=mini-runtime-local-token \
+./build-metal/bin/mini_runtime_metal_demo
+```
+
+页面地址：`http://81.71.150.26/`。页面查询最近 24 小时事件，并按最近一次 `run_id` 的真实时间戳回放。
+
+Metal trace 现在还会记录设备和 pipeline 就绪、Node ready、输入读取、MTLBuffer 创建、command buffer、encoder、dispatch grid、kernel 提交/完成，以及结果回传开始/完成等细粒度事件。事件先在本地批量缓存，运行结束后一次写入 InfluxDB，避免网络请求干扰 GPU 执行时间。
+
+### 打开动画讲解界面
+
+如果想直观看每一步怎么流转，可以直接打开 `apps/metal_visualizer.html`，点击“从头运行”。
+它会像一个小型 GPU profiler 一样展示代码高亮、Tensor shape/stride、Host buffer、Metal shared buffer、GPU 线程格子、矩阵单元格计算和事件日志；可以暂停、单步和调速。
+
 ## 目录结构
 
 ```text

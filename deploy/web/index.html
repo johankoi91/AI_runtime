@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>mini runtime live trace</title>
+  <style>
+    :root{color-scheme:dark;--bg:#09111f;--p:#111d31;--p2:#182944;--line:#2b4165;--t:#ecf4ff;--m:#9db0ce;--b:#64b9ff;--g:#60e0af;--o:#ffc36d;--c:#73e5df;--r:#ff8d9b}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 80% 0,#254878 0,#09111f 45%);color:var(--t);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.app{max-width:1420px;margin:auto;padding:22px}h1,h2,p{margin:0}h1{font-size:25px}h2{font-size:15px}.muted{color:var(--m)}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.top{display:flex;justify-content:space-between;gap:15px;align-items:end;margin-bottom:15px}.controls{display:flex;gap:7px;flex-wrap:wrap}button,input,select{border:1px solid var(--line);background:var(--p2);color:var(--t);border-radius:7px;padding:8px 10px}button{cursor:pointer;font-weight:600}button.primary{background:var(--g);color:#06151a;border-color:var(--g)}.config{display:grid;grid-template-columns:1.2fr 1fr 1fr 1fr auto;gap:8px;background:#0e192bde;border:1px solid var(--line);border-radius:10px;padding:11px;margin-bottom:13px}.config label{display:grid;gap:3px;color:var(--m);font-size:11px}.config input,.config select{width:100%;font-size:12px}.status{color:var(--g);min-height:21px;margin-bottom:10px}.timeline{background:#0e192bde;border:1px solid var(--line);border-radius:10px;padding:13px;margin-bottom:13px;overflow-x:auto}.rail{position:relative;height:82px;min-width:800px}.rail:before{content:"";position:absolute;left:0;right:0;top:34px;height:3px;background:#29405f}.event{position:absolute;top:0;transform:translateX(-50%);text-align:center;min-width:80px}.event i{display:block;margin:23px auto 7px;width:16px;height:16px;border-radius:50%;background:var(--p2);border:2px solid var(--line);transition:.2s}.event.active i{background:var(--o);border-color:var(--o);box-shadow:0 0 15px #ffc36d99}.event.done i{background:var(--g);border-color:var(--g)}.event b{font-size:11px;white-space:nowrap}.event small{display:block;color:var(--m);font-size:10px;white-space:nowrap}.grid{display:grid;grid-template-columns:1fr 1.5fr 1fr;gap:13px;align-items:start}.panel{background:#111d31e8;border:1px solid var(--line);border-radius:11px;padding:14px;min-width:0}.panel+.panel{margin-top:13px}.title{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:11px}.pill{color:var(--c);border:1px solid #286c75;padding:3px 7px;border-radius:99px;font-size:11px}.code{background:#080f1b;border-radius:7px;padding:7px 0}.line{display:grid;grid-template-columns:28px 1fr;padding:3px 9px;color:#8da2c0;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}.line span:first-child{color:#526888;text-align:right;padding-right:7px}.line.active{background:#304c70;color:var(--t);box-shadow:inset 3px 0 var(--o)}.memory{display:flex;gap:4px;padding:4px;min-height:51px;background:#09121f;border:1px solid #2f5271;border-radius:7px;margin:8px 0 13px}.block{display:flex;flex-direction:column;justify-content:center;padding:4px;border-radius:4px;color:#07121d;font-size:11px;font-weight:700;transition:.3s;overflow:hidden}.block small{font-weight:500}.a{background:var(--b);width:24%}.bb{background:#b99aff;width:24%}.bias{background:var(--o);width:16%}.hidden{background:var(--c);width:16%}.out{background:var(--g);width:16%}.pending{opacity:.18}.matrices{display:flex;justify-content:center;align-items:center;gap:14px;flex-wrap:wrap;min-height:190px;margin:15px 0}.matrix{text-align:center;color:var(--m);font-size:12px}.matrix table{border-spacing:4px;border-collapse:separate;margin-top:5px}.matrix td{width:50px;height:39px;text-align:center;border-radius:5px;background:#203453;color:var(--t);font-weight:600;transition:.25s}.matrix td.hot{background:var(--o);color:#21180d;transform:scale(1.08)}.matrix td.done{background:var(--g);color:#061b17}.arrow{color:#b99aff;font-size:24px}.threads{display:grid;grid-template-columns:repeat(4,1fr);gap:5px}.thread{padding:8px 3px;text-align:center;background:#172943;border:1px solid #294263;border-radius:5px;color:var(--m);font-size:11px;transition:.2s}.thread.on{background:#9a7040;border-color:var(--o);color:#fff5df}.thread.done{background:#205a54;color:#b9f6dc;border-color:#3ca895}.inspect{margin-top:11px;padding:10px;border-left:3px solid var(--o);background:#1a2a44;border-radius:5px;min-height:54px;font-size:12px}.fact{display:flex;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:1px solid #263957;color:var(--m)}.fact b{color:var(--t);font-weight:500;text-align:right}.log{height:240px;overflow:auto;background:#080f1b;border-radius:7px;padding:8px;color:#acc0dc;font:11px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace}.log div:before{content:'› ';color:var(--g)}.note{color:var(--m);font-size:12px;padding:9px;background:#0c1728;border:1px dashed #365170;border-radius:7px;margin-top:11px}@media(max-width:1000px){.grid{grid-template-columns:1fr 1fr}.grid>:last-child{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:13px}.grid>:last-child .panel{margin:0}}@media(max-width:650px){.app{padding:13px}.top{display:block}.controls{margin-top:11px}.config{grid-template-columns:1fr 1fr}.config button{grid-column:1/-1}.grid,.grid>:last-child{display:block}.grid>:last-child .panel{margin-top:13px}}
+  </style>
+<style>
+.story{background:linear-gradient(110deg,#19365a,#152640);border:1px solid #4b709b;border-radius:12px;padding:17px 19px;margin-bottom:13px;box-shadow:0 8px 24px #0003}.story h2{font-size:18px;margin-bottom:8px}.story p{margin:4px 0;color:#dce9fb}.story-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}.story-item{padding:9px 11px;border-radius:7px;background:#0d1b2f99;color:var(--m);font-size:13px}.story-item b{display:block;color:var(--o);font-size:11px;margin-bottom:2px;text-transform:uppercase;letter-spacing:.06em}@media(max-width:650px){.story-grid{grid-template-columns:1fr}}
+.gpu-explain{display:grid;gap:8px;text-align:left}.gpu-step{padding:9px 10px;background:#0d1b2f;border-radius:7px;border-left:3px solid var(--c)}.gpu-step b{display:block;color:var(--o);font-size:11px;margin-bottom:3px}.gpu-step code{color:var(--t);font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}.gpu-step.mem{border-left-color:var(--g)}.gpu-step.thread{border-left-color:var(--purple)}.formula{margin-top:7px;padding:8px;background:#07111f;border-radius:5px;color:var(--o);font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace}
+.thread-details{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:7px}.thread-detail{padding:7px;background:#07111f;border-radius:5px;color:var(--t);font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}.thread-detail b{color:var(--purple);font-weight:600}@media(max-width:650px){.thread-details{grid-template-columns:1fr}}
+.node-management{display:grid;grid-template-columns:1fr 1.35fr;gap:12px;margin-top:13px}.node-code{background:#080f1b;border-radius:7px;padding:9px;font:12px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;color:#b9c9e3}.node-code .line-no{color:#526888;margin-right:10px}.node-code .call{color:var(--cyan)}.node-cards{display:grid;grid-template-columns:1fr 1fr;gap:7px}.node-card{padding:9px;background:#172943;border:1px solid var(--line);border-radius:7px;transition:.25s}.node-card.active{border-color:var(--o);background:#5b4529}.node-card.done{border-color:var(--g);background:#205a54}.node-card.blocked{opacity:.55}.node-card b{display:block}.node-card small{display:block;color:var(--m);margin-top:3px}.node-state{display:inline-block;margin-top:7px;color:var(--o);font-size:11px}.node-card.done .node-state{color:var(--g)}.scheduler{grid-column:1/-1;display:flex;gap:7px;align-items:center;flex-wrap:wrap;padding-top:2px}.scheduler-label{color:var(--m);font-size:12px}.scheduler-item{padding:6px 9px;background:#07111f;border-radius:5px;color:var(--m);font:11px ui-monospace,SFMono-Regular,Menlo,monospace}.scheduler-item.active{outline:1px solid var(--o);color:var(--o)}.scheduler-item.done{color:var(--g);outline:1px solid #3ca895}.scheduler-arrow{color:var(--purple)}
+.timeline{padding-bottom:25px}.rail{min-width:1080px;height:116px}.event b,.event small{display:block;max-width:82px;white-space:normal;line-height:1.15;margin-left:auto;margin-right:auto}.event:nth-child(even) b,.event:nth-child(even) small{position:relative;top:34px}.graph-flow{background:#0e192bde;border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:13px}.graph-flow h2{margin-bottom:4px}.graph-flow p{color:var(--m);font-size:12px;margin-bottom:12px}.graph-lane{display:grid;grid-template-columns:1fr 46px 1.2fr 46px 1.2fr;align-items:center;gap:8px}.graph-node{padding:11px 10px;border:1px solid var(--line);border-radius:8px;background:#172943;min-height:70px;transition:.25s}.graph-node b{display:block;font-size:14px}.graph-node small{display:block;color:var(--m);margin-top:4px}.graph-node.active{border-color:var(--o);background:#5b4529;box-shadow:0 0 15px #ffc36d55}.graph-node.done{border-color:var(--g);background:#205a54}.graph-arrow{text-align:center;color:var(--purple);font-size:24px}.graph-queue{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}.graph-queue span{padding:5px 8px;background:#07111f;border-radius:5px;color:var(--m);font:11px ui-monospace,SFMono-Regular,Menlo,monospace}.graph-queue span.active{color:var(--o);outline:1px solid var(--o)}
+.timeline-hint{color:var(--m);font-size:11px;margin-top:7px;text-align:right}
+</style>
+<style>
+.timeline{overflow:visible}.timeline-intro{display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin-bottom:11px;color:var(--m);font-size:12px}.timeline-intro b{color:var(--t);font-size:14px}.phase-chip{padding:4px 8px;border-radius:99px;background:#172943;border:1px solid var(--line)}.phase-chip.graph{border-color:var(--blue)}.phase-chip.metal{border-color:var(--purple)}.phase-chip.gpu{border-color:var(--orange)}.phase-chip.return{border-color:var(--green)}.rail{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;min-width:0!important;width:auto!important;height:auto!important}.rail:before{display:none}.event{position:relative!important;left:auto!important;top:auto!important;transform:none!important;min-width:0!important;display:grid;grid-template-columns:19px 1fr;grid-template-rows:auto auto auto;text-align:left;padding:9px 10px;background:#12233b;border:1px solid #294263;border-left:3px solid var(--line);border-radius:8px}.event[data-phase="graph"]{border-left-color:var(--blue)}.event[data-phase="metal"]{border-left-color:var(--purple)}.event[data-phase="gpu"]{border-left-color:var(--orange)}.event[data-phase="return"]{border-left-color:var(--green)}.event i{grid-row:1 / 4;margin:4px 7px 0 0;width:12px;height:12px}.event b,.event small{position:static!important;max-width:none;text-align:left;margin:0;white-space:nowrap}.event b{font-size:11px}.event small{font-size:10px;margin-top:2px}.event-plain{grid-column:2;color:var(--t);font-size:12px;font-weight:600;margin-top:3px}.event.active{background:#5b4529;border-color:var(--o);box-shadow:0 0 14px #ffc36d44}.event.done{background:#173d3a;border-color:#3ca895;opacity:.82}.timeline-hint{text-align:left;margin-top:10px}.timeline-hint::before{content:'阅读顺序：';color:var(--t);font-weight:600}@media(max-width:650px){.rail{grid-template-columns:1fr!important}.event{padding:10px}}
+</style>
+<style>
+.trace-view{background:#0e192bde;border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:13px}.trace-view h2{font-size:16px}.trace-view p{color:var(--m);font-size:12px;margin:4px 0 12px}.trace-legend{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:10px}.trace-legend span{padding:4px 8px;border-radius:99px;font-size:11px;border:1px solid var(--line)}.trace-legend .executor{border-color:var(--blue)}.trace-legend .metal{border-color:var(--purple)}.trace-legend .gpu{border-color:var(--orange)}.trace-legend .memory{border-color:var(--green)}.trace-scroll{overflow-x:auto;background:#080f1b;border-radius:8px;padding:10px}.trace-inner{min-width:920px}.trace-ruler{height:20px;position:relative;border-bottom:1px solid #304866;color:var(--m);font-size:10px}.trace-ruler span{position:absolute;transform:translateX(-50%)}.track-lane{display:grid;grid-template-columns:115px 1fr;min-height:48px;border-bottom:1px solid #1c304b}.track-label{padding:12px 8px 8px 2px;color:var(--m);font-size:12px}.track-label b{display:block;color:var(--t);font-size:12px}.track-area{position:relative;min-height:48px;background:repeating-linear-gradient(90deg,transparent 0,transparent calc(10% - 1px),#1b304a calc(10% - 1px),#1b304a 10%)}.trace-bar{position:absolute;top:12px;height:24px;min-width:8px;border-radius:5px;padding:3px 6px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:#06121d;font-size:10px;font-weight:600}.trace-bar.executor{background:var(--blue)}.trace-bar.metal{background:var(--purple)}.trace-bar.gpu{background:var(--orange)}.trace-bar.memory{background:var(--green)}.trace-bar:hover{z-index:3;outline:2px solid var(--t);overflow:visible}.trace-empty{color:var(--m);font-size:11px;padding:12px}@media(max-width:650px){.trace-inner{min-width:720px}}
+</style>
+<style>
+.story{min-height:158px}.trace-view{min-height:260px}.grid > section.panel{min-height:620px}#inspect{min-height:250px;max-height:250px;overflow:auto}.compact-journey{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;min-width:0!important;width:auto!important;align-items:start}.journey-phase{background:#0b182b;border:1px solid var(--line);border-radius:8px;padding:8px;min-width:0}.journey-phase h3{margin:0 0 7px;color:var(--t);font-size:12px}.journey-phase .event{display:grid;grid-template-columns:14px 1fr;grid-template-rows:auto auto auto;min-height:55px;margin-bottom:6px;padding:7px 7px;border-left-width:2px}.journey-phase .event:last-child{margin-bottom:0}.journey-phase .event i{width:9px;height:9px;margin:3px 5px 0 0}.journey-phase .event b{font-size:10px}.journey-phase .event small{font-size:9px}.journey-phase .event-plain{font-size:10px;margin-top:2px;white-space:normal;line-height:1.2}.journey-phase .event.active{box-shadow:0 0 10px #ffc36d55}.journey-phase .event.done{opacity:.75}@media(max-width:1000px){.compact-journey{grid-template-columns:repeat(2,minmax(260px,1fr));min-width:560px!important}.grid > section.panel{min-height:560px}}@media(max-width:650px){.compact-journey{grid-template-columns:1fr;min-width:0!important}.grid > section.panel{min-height:0}}
+</style>
+</head>
+<body><main class="app">
+  <div class="top"><div><h1>mini runtime / recorded InfluxDB trace</h1><p class="muted">页面展示的是 Metal demo 实际运行后记录的事件时间戳</p></div><div class="controls"><button class="primary" id="play">▶ 按真实时间回放</button><button id="pause">Ⅱ 暂停</button><button id="prev">← 上一步</button><button id="next">下一步 →</button><button id="refresh">↻ 刷新</button></div></div>
+  <form class="config" id="config"><label>Influx API<input id="api" value="/influx"></label><label>组织<input id="org" value="mini-runtime"></label><label>Bucket<input id="bucket" value="mini-runtime"></label><label>Token<input id="token" value="mini-runtime-local-token" type="password"></label><button class="primary" type="submit">加载时间范围</button></form>
+  <div class="status" id="status">等待加载 InfluxDB 事件。</div><section class="story"><h2 id="storyTitle">先看这一句话</h2><p id="storyMain">程序正在等待一次真实运行。加载后，我会用生活中的比喻解释每一步。</p><div class="story-grid"><div class="story-item"><b>你现在看到</b><span id="storySee">还没有开始</span></div><div class="story-item"><b>把它想成</b><span id="storyThink">一条流水线，数据会从左边走到右边</span></div></div></section><section class="graph-flow"><h2>Graph 整体调度</h2><p>Graph 先准备输入，再按依赖顺序执行两个节点：必须先得到 <code>hidden</code>，才能计算 <code>out</code>。</p><div class="graph-lane"><div class="graph-node" id="graphInput"><b>输入 Tensor</b><small>a、b、bias 已就绪</small></div><div class="graph-arrow">→</div><div class="graph-node" id="graphHidden"><b>节点 1：hidden</b><small>hidden = MatMul(a, b)</small></div><div class="graph-arrow">→</div><div class="graph-node" id="graphOut"><b>节点 2：out</b><small>out = Add(hidden, bias)</small></div></div><div class="graph-queue" id="graphQueue"><span>① 等待输入</span><span>② 等待 hidden</span><span>③ 等待 out</span><span>④ 完成</span></div><div class="node-management"><div class="node-code"><span class="line-no">05</span><span class="call">graph.add_node</span>(MatMul(a, b));<br><span class="line-no">06</span><span class="call">graph.add_node</span>(Add(hidden, bias));</div><div class="node-cards"><div class="node-card blocked" id="nodeHidden"><b>Node hidden</b><small>op: MatMul</small><small>inputs: a, b</small><small>output: hidden</small><span class="node-state">已登记，等待调度</span></div><div class="node-card blocked" id="nodeOut"><b>Node out</b><small>op: Add</small><small>inputs: hidden, bias</small><small>output: out</small><span class="node-state">等待 hidden 完成</span></div></div><div class="scheduler"><span class="scheduler-label">Executor 调度队列：</span><span class="scheduler-item" id="schedHidden">① hidden / MatMul</span><span class="scheduler-arrow">→</span><span class="scheduler-item" id="schedOut">② out / Add</span></div></div></section><section class="timeline"><div class="rail" id="rail"></div><div class="timeline-hint">事件较多时可横向滚动时间轴；每个事件保留独立阅读空间。</div></section>
+  <div class="grid"><aside><section class="panel"><div class="title"><h2>代码执行位置</h2><span class="pill" id="stage">idle</span></div><div class="code" id="code"></div><div class="note" id="explain">加载一次真实 run 后，这里会跟随事件时间戳移动。</div></section><section class="panel"><div class="title"><h2>实际内存事件</h2><span class="pill">bytes from event</span></div><div class="muted">Host Tensor buffer</div><div class="memory"><div class="block a">a<small>24 B</small></div><div class="block bb">b<small>24 B</small></div><div class="block bias">bias<small>16 B</small></div></div><div class="muted">Metal shared buffer</div><div class="memory" id="memory"><div class="block a pending">a<small>24 B</small></div><div class="block bb pending">b<small>24 B</small></div><div class="block bias pending">bias<small>16 B</small></div><div class="block hidden pending">hidden<small>16 B</small></div><div class="block out pending">out<small>16 B</small></div></div><div class="note">M2 使用统一内存；页面展示 Influx 事件中的申请和回传字节数，不把它误标成独立 VRAM。</div></section></aside><section class="panel"><div class="title"><h2>GPU 线程与矩阵</h2><span class="pill" id="kernel">等待事件</span></div><div class="matrices" id="matrices"></div><div class="threads" id="threads"></div><div class="inspect" id="inspect">暂无真实事件。</div></section><aside><section class="panel"><div class="title"><h2>当前事件</h2><span class="pill" id="eventNo">0 / 0</span></div><div id="facts"></div></section><section class="panel"><div class="title"><h2>InfluxDB event log</h2><span class="pill">chronological</span></div><div class="log" id="log"></div></section></aside></div>
+</main><script>
+(() => {
+  if (!HTMLCollection.prototype.forEach) HTMLCollection.prototype.forEach = Array.prototype.forEach;
+  const $=id=>document.getElementById(id); let events=[], cursor=0, timer=null, speed=1;
+  const a=[[1,2,3],[4,5,6]],b=[[1,2],[3,4],[5,6]],bias=[[10,20],[30,40]],hidden=[[22,28],[49,64]],out=[[32,48],[79,104]];
+  const code=['Graph graph;','graph.set_input("a", Tensor::from_vector(...));','graph.set_input("b", Tensor::from_vector(...));','graph.set_input("bias", Tensor::from_vector(...));','graph.add_node(MatMul(a,b));','graph.add_node(Add(hidden,bias));','MemoryPool pool;','MetalBackend backend;','Executor executor(backend);','executor.run(graph,pool);','MTLBuffer* lhs = newBufferWithBytes(a);','MTLBuffer* rhs = newBufferWithBytes(b);','dispatchThreads(2 × 2);','hidden[row,col] = dot(lhs[row],rhs[col]);','dispatchThreads(4);','out[index] = hidden[index] + bias[index];','waitUntilCompleted();','memcpy(Tensor::out, MTLBuffer::out);'];
+  function matrix(name,data,hot=[],done=false){return `<div class="matrix">${name}<table>${data.map((r,i)=>`<tr>${r.map((v,j)=>`<td class="${hot.some(p=>p[0]===i&&p[1]===j)?'hot ':''}${done?'done':''}">${v}</td>`).join('')}</tr>`).join('')}</table></div>`}
+  function parseCsv(text){const rows=[];let row=[],cell='',quote=false;for(let i=0;i<text.length;i++){const c=text[i],n=text[i+1];if(c==='"'&&quote&&n==='"'){cell+='"';i++;}else if(c==='"')quote=!quote;else if(c===','&&!quote){row.push(cell);cell='';}else if((c==='\n'||c==='\r')&&!quote){if(c==='\r'&&n==='\n')i++;row.push(cell);if(row.some(x=>x!==''&&!x.startsWith('#'))&&!row[0].startsWith('#'))rows.push(row);row=[];cell='';}else cell+=c;}if(cell||row.length){row.push(cell);rows.push(row)}return rows;}
+  async function load(){const api=$('api').value.replace(/\/$/,''),org=$('org').value,bucket=$('bucket').value,token=$('token').value;const query=`from(bucket: "${bucket}") |> range(start: -24h) |> filter(fn: (r) => r._measurement == "runtime_trace") |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value") |> group(columns: []) |> sort(columns: ["_time"])`; $('status').textContent='正在从 InfluxDB 查询真实事件…';try{const res=await fetch(`${api}/api/v2/query?org=${encodeURIComponent(org)}`,{method:'POST',headers:{Authorization:`Token ${token}`,'Content-Type':'application/vnd.flux',Accept:'application/csv'},body:query});if(!res.ok)throw new Error(`${res.status} ${await res.text()}`);const rows=parseCsv(await res.text());const head=rows.findIndex(r=>r.includes('_time'));if(head<0)throw new Error('没有找到事件数据');const h=rows[head];const all=rows.slice(head+1).map(r=>Object.fromEntries(h.map((k,i)=>[k,r[i]||'']))).filter(e=>e.event).sort((x,y)=>Date.parse(x._time)-Date.parse(y._time));if(!all.length)throw new Error('时间范围内没有 runtime_trace');const latest=all[all.length-1].run_id;events=all.filter(e=>e.run_id===latest);cursor=0;render();$('status').textContent=`已加载最近一次 run 的 ${events.length} 个真实事件，run_id=${latest||'unknown'}`;}catch(e){$('status').textContent=`加载失败：${e.message}`;}}
+  function storyFor(e){const stories={run_start:['程序开始了','程序准备执行一张小计算图。','厨师刚走进厨房，准备做菜。'],node_start:['程序选好了下一步','它决定现在先做哪一个计算。','厨师看菜谱，知道先切菜还是先开火。'],buffer_allocated:['程序借了一块内存','结果需要一个地方保存。','先拿一个空盘子，等 GPU 把结果放进去。'],kernel_submitted:['任务交给 GPU 了','Metal 把计算任务和数据送进 GPU。','把菜和菜谱递给一群同时工作的厨师。'],kernel_completed:['GPU 算完了一小步','矩阵里的一个或多个格子已经得到答案。','厨师把这一道菜做好了。'],copy_back:['答案回到程序手里','GPU 的结果被放回 runtime 的 Tensor。','把做好的菜从厨房端回餐桌。'],node_complete:['这一道工序完成','Graph 可以继续往下一步走。','第一道菜完成，开始准备下一道。'],run_complete:['全部完成','最终结果可以被程序读取。','整桌菜上齐了，可以开吃。']};return stories[e.event]||['正在运行','程序正在处理一个事件。','流水线正在经过一个工位。'];}
+  function syncStory(){if(!events.length)return;const s=storyFor(events[cursor]);$('storyTitle').textContent=s[0];$('storyMain').textContent=s[1];$('storySee').textContent=events[cursor].detail||events[cursor].event;$('storyThink').textContent=s[2];}
+  function eventIndex(e){const n=e.event||'';if(n==='run_start')return 0;if(n==='node_start')return 1;if(n==='buffer_allocated')return 2;if(n==='kernel_submitted')return 3;if(n==='kernel_completed')return 4;if(n==='copy_back')return 5;if(n==='node_complete')return 6;if(n==='run_complete')return 7;return 3;}
+  function gpuExplain(e,idx){const event=e.event||'';const cells=['[0,0]','[0,1]','[1,0]','[1,1]'];const cell=cells[Math.min(3,Math.max(0,Number(e.sequence||0)%4))];if(event==='run_start')return '<div class="gpu-explain"><div class="gpu-step"><b>现在做什么</b>还没有启动 GPU。程序刚创建运行任务。</div><div class="gpu-step mem"><b>内存变化</b><code>a 24 B、b 24 B、bias 16 B</code> 仍在 CPU 和统一内存中，GPU 还没有输出。</div><div class="gpu-step thread"><b>线程调度</b>0 个 GPU 线程；先等 Executor 发出 kernel。</div></div>';if(event==='node_start')return `<div class="gpu-explain"><div class="gpu-step"><b>现在做什么</b>Executor 选中节点 <code>${e.detail||'hidden'}</code>，准备读取输入。</div><div class="gpu-step mem"><b>内存变化</b>读取输入 buffer，不修改 a、b、bias；输出空间还未写入。</div><div class="gpu-step thread"><b>线程调度</b>GPU 尚未执行，Executor 只是把任务交给 MetalBackend。</div></div>`;if(event==='buffer_allocated')return `<div class="gpu-explain"><div class="gpu-step"><b>现在做什么</b>为 <code>${e.detail||'output'}</code> 申请输出空间。</div><div class="gpu-step mem"><b>内存变化</b>新增加 <code>${e.bytes||16} B</code>：4 个 float32，每个 4 B。输出从“没有”变成“有位置可写”。</div><div class="gpu-step thread"><b>线程调度</b>线程还没有计算；这里只是准备工作台。</div></div>`;if(event==='kernel_submitted'&&e.detail&&e.detail.includes('matmul'))return `<div class="gpu-explain"><div class="gpu-step"><b>先理解这句代码</b><code>hidden[row,col] = dot(lhs[row], rhs[col])</code> 的意思是：GPU 正在计算 hidden 矩阵中的第 <code>row</code> 行、第 <code>col</code> 列那个格子。</div><div class="gpu-step"><b>dot 是什么</b>先取 <code>lhs[row]</code> 的一整行，再取 <code>rhs</code> 的第 <code>col</code> 列；对应位置相乘，最后全部相加。</div><div class="formula">hidden[0,0] = a[0,0]×b[0,0] + a[0,1]×b[1,0] + a[0,2]×b[2,0]<br>          = 1×1 + 2×3 + 3×5 = 22</div><div class="gpu-step mem"><b>内存变化</b>读取 a 的第 0 行和 b 的第 0 列；把结果 <code>22</code> 写入 hidden[0,0] 的 4 B 位置。</div><div class="gpu-step thread"><b>线程调度</b>线程 <code>(col=0,row=0)</code> 负责 hidden[0,0]。另外 3 个线程同时负责 hidden[0,1]、hidden[1,0]、hidden[1,1]。</div></div>`;if(event==='kernel_submitted')return `<div class="gpu-explain"><div class="gpu-step"><b>现在做什么</b>把 kernel 和 buffer 绑定后提交给 GPU：<code>${e.detail||'kernel'}</code>。</div><div class="gpu-step mem"><b>内存变化</b>GPU 读取输入 buffer；输出 buffer hidden + bias → out 等待写入。</div><div class="gpu-step thread"><b>线程调度</b><code>4 个线程，一维 index=0..3</code>，每个线程负责一个 out 元素。</div></div>`;if(event==='kernel_completed'&&e.detail&&e.detail.includes('matmul'))return `<div class="gpu-explain"><div class="gpu-step"><b>现在做什么</b>4 个线程都完成了点积，hidden 矩阵已经写好。</div><div class="formula">hidden = [[22, 28], [49, 64]]<br>每个格子 = lhs 的一行 · rhs 的一列</div><div class="gpu-step mem"><b>内存变化</b>hidden buffer 写入 <code>${e.bytes||16} B</code>，包含 4 个 float32 结果。</div><div class="gpu-step thread"><b>线程调度</b>线程 (0,0)→22，(1,0)→28，(0,1)→49，(1,1)→64；全部结束。</div></div>`;if(event==='kernel_completed')return `<div class="gpu-explain"><div class="gpu-step"><b>现在做什么</b>GPU kernel 已完成，输出值已经写进 GPU buffer。</div><div class="gpu-step mem"><b>内存变化</b><code>${e.detail||'output'}</code> buffer 新写入 <code>${e.bytes||16} B</code>；这是 GPU 产生的数据。</div><div class="gpu-step thread"><b>线程调度</b>所有线程完成。每个线程做一次 hidden[index] + bias[index]。当前观察单元：<code>${cell}</code>。</div></div>`;if(event==='copy_back')return `<div class="gpu-explain"><div class="gpu-step"><b>现在做什么</b>把 GPU buffer 的结果复制回 Runtime Tensor。</div><div class="gpu-step mem"><b>内存变化</b><code>${e.bytes||16} B</code> 从 Metal shared buffer 回到 CPU 可读的 Tensor；GPU 结果变成 Graph 里的数据。</div><div class="gpu-step thread"><b>线程调度</b>GPU 计算已经结束，当前没有活跃线程，程序进入同步/回传阶段。</div></div>`;if(event==='node_complete')return `<div class="gpu-explain"><div class="gpu-step"><b>现在做什么</b>节点 <code>${e.detail||'node'}</code> 完成，Executor 可以继续下一个节点。</div><div class="gpu-step mem"><b>内存变化</b>当前节点的输出已经进入 Graph；MemoryPool 使用量增加 <code>${e.bytes||16} B</code>。</div><div class="gpu-step thread"><b>线程调度</b>本节点线程全部结束，下一节点会重新提交自己的 kernel。</div></div>`;return '<div class="gpu-explain"><div class="gpu-step"><b>现在做什么</b>所有计算和回传完成。</div><div class="gpu-step mem"><b>内存变化</b>最终 out Tensor 可被 CPU 读取，值为 <code>[32, 48; 79, 104]</code>。</div><div class="gpu-step thread"><b>线程调度</b>GPU 空闲，整个 Graph 执行结束。</div></div>';}
+  function render(){if(!events.length){$('rail').innerHTML='';return}const e=events[cursor],idx=eventIndex(e),detail=e.detail||'',isMatmul=detail.includes('matmul'),isAdd=detail.includes('add'),submitted=e.event==='kernel_submitted',completed=e.event==='kernel_completed',hiddenDone=isMatmul&&(completed||e.event==='copy_back'||(e.event==='node_complete'&&detail==='hidden')),outDone=isAdd&&(completed||e.event==='copy_back'||(e.event==='node_complete'&&detail==='out')||e.event==='run_complete');const first=Date.parse(events[0]._time),last=Date.parse(events[events.length-1]._time),span=Math.max(1,last-first);$('rail').innerHTML=events.map((x,i)=>{const left=Math.max(1,Math.min(99,(Date.parse(x._time)-first)/span*96+2));return `<div class="event ${i<cursor?'done ':''}${i===cursor?'active':''}" style="left:${left}%"><i></i><b>${x.event}</b><small>${new Date(x._time).toLocaleTimeString()}</small></div>`}).join('');$('stage').textContent=e.stage||'runtime';$('kernel').textContent=e.detail||e.event;$('eventNo').textContent=`${cursor+1} / ${events.length}`;$('facts').innerHTML=[['event',e.event],['stage',e.stage||'-'],['detail',e.detail||'-'],['timestamp',new Date(e._time).toISOString()],['bytes',`${e.bytes||0} B`],['duration',`${Number(e.duration_ms||0).toFixed(3)} ms`],['sequence',e.sequence||'-']].map(([k,v])=>`<div class="fact"><span class="muted">${k}</span><b>${v}</b></div>`).join('');$('log').innerHTML=events.slice(0,cursor+1).map(x=>`<div>${new Date(x._time).toISOString()} · ${x.stage||''} · ${x.event} · ${x.detail||''}</div>`).join('');$('log').scrollTop=$('log').scrollHeight;const activeLines=idx<2?[1,5,6]:idx<3?[7,8,9,10]:idx<4?[11,12]:idx<5?[13,14]:idx<6?[15,16]:[17,18];$('code').innerHTML=code.map((x,i)=>`<div class="line ${activeLines.includes(i+1)?'active':''}"><span>${String(i+1).padStart(2,'0')}</span><span>${x}</span></div>`).join('');$('explain').textContent=`真实时间 ${new Date(e._time).toLocaleTimeString()}：${e.detail||e.event}。事件由本地 Metal demo 写入 InfluxDB。`;const mem=$('memory').children;mem.forEach((x,i)=>x.classList.toggle('pending',idx<2||(idx<5&&i>2)));let focus=[[0,0]];let matrixView;if(idx<3){matrixView=matrix('a',a)+matrix('b',b)+matrix('bias',bias);}else if(isMatmul&&submitted){matrixView=matrix('a',a,[[0,0]])+'<div class="arrow">×</div>'+matrix('b',b,[[0,0]])+'<div class="arrow">→</div>'+matrix('hidden',hidden,[[0,0]]);}else if(hiddenDone){matrixView=matrix('a',a)+matrix('b',b)+'<div class="arrow">→</div>'+matrix('hidden',hidden,[],true);}else if(isAdd&&submitted){matrixView=matrix('hidden',hidden,focus)+'<div class="arrow">+</div>'+matrix('bias',bias,focus)+'<div class="arrow">→</div>'+matrix('out',out,focus);}else if(outDone){matrixView=matrix('hidden',hidden)+ '<div class="arrow">+</div>'+matrix('bias',bias)+'<div class="arrow">→</div>'+matrix('out',out,[],true);}else{matrixView=matrix('hidden',hidden)+ '<div class="arrow">+</div>'+matrix('bias',bias)+'<div class="arrow">→</div>'+matrix('out',out);} $('matrices').innerHTML=matrixView;const activeThread=submitted?0:-1;const allDone=completed||hiddenDone||outDone;$('threads').innerHTML=Array.from({length:4},(_,i)=>`<div class="thread ${allDone?'done ':i===activeThread?'on ':''}">thread (${i%2},${Math.floor(i/2)})<br><b>${isMatmul||hiddenDone?'hidden':'out'}[${Math.floor(i/2)},${i%2}]</b></div>`).join('');$('inspect').innerHTML=gpuExplain(e,idx);}
+  function step(delta){clearInterval(timer);if(!events.length)return;cursor=Math.max(0,Math.min(events.length-1,cursor+delta));render();syncStory();} function play(){clearInterval(timer);if(!events.length)return;timer=setInterval(()=>{if(cursor<events.length-1){cursor++;render();syncStory()}else clearInterval(timer)},Math.max(1000,1000/speed));} $('config').onsubmit=e=>{e.preventDefault();load()};$('refresh').onclick=load;$('play').onclick=play;$('pause').onclick=()=>clearInterval(timer);$('prev').onclick=()=>step(-1);$('next').onclick=()=>step(1);$('token').value=localStorage.getItem('influx-token')||$('token').value;$('token').onchange=()=>localStorage.setItem('influx-token',$('token').value);setInterval(syncStory,200);load();
+})();
+</script>
+<script>
+(() => {
+  function syncCodeWithGpuEvent() {
+    const kernel = document.getElementById('kernel');
+    const code = document.querySelectorAll('#code .line');
+    if (!kernel || !code.length) return;
+    const event = document.querySelector('.event.active b')?.textContent || '';
+    const detail = kernel.textContent || '';
+    let lines = [];
+    if (event === 'run_start') lines = [1, 2, 3, 4];
+    else if (event === 'device_ready' || event === 'pipeline_ready') lines = [8, 9];
+    else if (event === 'node_ready') lines = detail.includes('matmul') ? [5, 9, 10] : [6, 9, 10];
+    else if (event === 'node_start' || event === 'inputs_ready') lines = [9, 10];
+    else if (event === 'buffer_allocated') lines = [7, 10];
+    else if (event === 'input_buffer_created' || event === 'output_buffer_created') lines = [11, 12];
+    else if (event === 'command_buffer_created' || event === 'encoder_configured') lines = [10, 11, 12];
+    else if (event === 'dispatch_configured' || event === 'kernel_submitted') lines = detail.includes('matmul') ? [13, 14] : [15, 16];
+    else if (event === 'kernel_completed') lines = detail.includes('matmul') ? [13, 14] : [15, 16];
+    else if (event === 'copy_back_started' || event === 'copy_back_completed') lines = [17, 18];
+    else if (event === 'node_complete') lines = detail === 'hidden' ? [5, 10] : [6, 10];
+    else if (event === 'run_complete') lines = [18];
+    code.forEach((line, index) => line.classList.toggle('active', lines.includes(index + 1)));
+  }
+  setInterval(syncCodeWithGpuEvent, 100);
+})();
+</script>
+<script>
+(() => {
+  const calculations = {
+    matmul: [
+      ['(0,0)', 'hidden[0,0]', 'a row 0 · b col 0', '1×1 + 2×3 + 3×5 = 22'],
+      ['(1,0)', 'hidden[0,1]', 'a row 0 · b col 1', '1×2 + 2×4 + 3×6 = 28'],
+      ['(0,1)', 'hidden[1,0]', 'a row 1 · b col 0', '4×1 + 5×3 + 6×5 = 49'],
+      ['(1,1)', 'hidden[1,1]', 'a row 1 · b col 1', '4×2 + 5×4 + 6×6 = 64']
+    ],
+    add: [
+      ['0', 'out[0,0]', 'hidden[0,0] + bias[0,0]', '22 + 10 = 32'],
+      ['1', 'out[0,1]', 'hidden[0,1] + bias[0,1]', '28 + 20 = 48'],
+      ['2', 'out[1,0]', 'hidden[1,0] + bias[1,0]', '49 + 30 = 79'],
+      ['3', 'out[1,1]', 'hidden[1,1] + bias[1,1]', '64 + 40 = 104']
+    ]
+  };
+  function renderThreadDetails(kind) {
+    const panel = document.getElementById('inspect');
+    const threads = document.getElementById('threads');
+    if (!panel || !threads) return;
+    const detail = document.getElementById('kernel').textContent || '';
+    const rows = kind === 'matmul' ? calculations.matmul : calculations.add;
+    const title = kind === 'matmul' ? '4 个线程同时做 4 个点积' : '4 个线程同时做 4 次加法';
+    const memory = kind === 'matmul' ? '读取 a 的一行和 b 的一列；每个线程向 hidden 写入 1 个 float32（4 B）。' : '读取 hidden 和 bias 的同一位置；每个线程向 out 写入 1 个 float32（4 B）。';
+    panel.innerHTML = `<div class="gpu-explain"><div class="gpu-step thread"><b>${title}</b>这里的坐标是 (x=列, y=行)。4 个线程被同时派发，每个线程只负责一个输出格子。</div><div class="thread-details">${rows.map(row => `<div class="thread-detail"><b>thread ${row[0]}</b> → <strong>${row[1]}</strong><br>${row[2]}<br><span class="formula">${row[3]}</span></div>`).join('')}</div><div class="gpu-step mem"><b>内存变化</b>${memory} kernel 完成前这些值在 GPU 输出 buffer 中，完成后才进入下一步。</div></div>`;
+    Array.from(threads.children).forEach(thread => { thread.classList.remove('on','done'); thread.classList.add('on'); });
+    Array.from(document.querySelectorAll('#matrices td')).forEach(cell => cell.classList.add('hot'));
+  }
+  function syncSubmittedThreads() {
+    const kernel = document.getElementById('kernel');
+    if (!kernel) return;
+    const detail = kernel.textContent || '';
+    if (detail.includes('matmul_kernel grid=')) renderThreadDetails('matmul');
+    else if (detail.includes('add_kernel grid=')) renderThreadDetails('add');
+  }
+  setInterval(syncSubmittedThreads, 100);
+})();
+</script>
+<script>
+(() => {
+  function syncGraphSchedule() {
+    const stage = document.getElementById('stage');
+    const kernel = document.getElementById('kernel');
+    const input = document.getElementById('graphInput');
+    const hidden = document.getElementById('graphHidden');
+    const out = document.getElementById('graphOut');
+    const queue = document.querySelectorAll('#graphQueue span');
+    if (!stage || !kernel || !input || !hidden || !out) return;
+    const event = stage.textContent || '';
+    const detail = kernel.textContent || '';
+    const timelineEvent = document.querySelector('.event.active b')?.textContent || '';
+    [input, hidden, out].forEach(node => node.classList.remove('active', 'done'));
+    Array.from(queue).forEach(item => item.classList.remove('active'));
+    input.classList.add('done');
+    queue[0]?.classList.add('active');
+    if (detail.includes('matmul') || detail === 'hidden' || event === 'executor') {
+      hidden.classList.add(timelineEvent === 'kernel_completed' || timelineEvent === 'copy_back' || timelineEvent === 'node_complete' ? 'done' : 'active');
+      queue[1]?.classList.add('active');
+    }
+    if (detail.includes('add') || detail === 'out') {
+      hidden.classList.add('done');
+      out.classList.add(timelineEvent === 'kernel_completed' || timelineEvent === 'copy_back' || timelineEvent === 'node_complete' || detail === 'out' ? 'done' : 'active');
+      queue[1]?.classList.add('active');
+      queue[2]?.classList.add('active');
+    }
+    if (detail === 'output verified' || event === 'runtime' && detail === 'output verified') {
+      hidden.classList.add('done');
+      out.classList.add('done');
+      queue[0]?.classList.remove('active');
+      queue[1]?.classList.remove('active');
+      queue[2]?.classList.remove('active');
+      queue[3]?.classList.add('active');
+    }
+  }
+  setInterval(syncGraphSchedule, 100);
+})();
+</script>
+<script>
+(() => {
+  function syncNodeManager() {
+    const active = document.querySelector('.event.active b')?.textContent || '';
+    const detail = document.getElementById('kernel')?.textContent || '';
+    const hidden = document.getElementById('nodeHidden');
+    const out = document.getElementById('nodeOut');
+    const hiddenQueue = document.getElementById('schedHidden');
+    const outQueue = document.getElementById('schedOut');
+    if (!hidden || !out || !hiddenQueue || !outQueue) return;
+    [hidden, out].forEach(node => node.classList.remove('active', 'done', 'blocked'));
+    [hiddenQueue, outQueue].forEach(node => node.classList.remove('active', 'done'));
+    hidden.classList.add('blocked');
+    out.classList.add('blocked');
+    hidden.querySelector('.node-state').textContent = '已登记，等待调度';
+    out.querySelector('.node-state').textContent = '等待 hidden 完成';
+    if (active === 'node_start' || detail.includes('matmul')) {
+      hidden.classList.remove('blocked');
+      hidden.classList.add(active === 'node_complete' || active === 'copy_back' ? 'done' : 'active');
+      hidden.querySelector('.node-state').textContent = active === 'node_complete' || active === 'copy_back' ? '已完成，结果可用' : 'Executor 正在调度';
+      hiddenQueue.classList.add(active === 'node_complete' || active === 'copy_back' ? 'done' : 'active');
+    }
+    if (detail.includes('add') || detail === 'out' || active === 'node_complete' && detail === 'out') {
+      hidden.classList.remove('blocked', 'active');
+      hidden.classList.add('done');
+      hidden.querySelector('.node-state').textContent = '已完成，结果可用';
+      out.classList.remove('blocked');
+      out.classList.add(active === 'node_complete' || active === 'copy_back' || detail === 'out' ? 'done' : 'active');
+      out.querySelector('.node-state').textContent = active === 'node_complete' || active === 'copy_back' || detail === 'out' ? '已完成，结果可用' : 'Executor 正在调度';
+      hiddenQueue.classList.add('done');
+      outQueue.classList.add(active === 'node_complete' || active === 'copy_back' || detail === 'out' ? 'done' : 'active');
+    }
+    if (detail === 'output verified') {
+      hidden.classList.remove('blocked', 'active');
+      out.classList.remove('blocked', 'active');
+      hidden.classList.add('done');
+      out.classList.add('done');
+      hidden.querySelector('.node-state').textContent = '已完成，结果可用';
+      out.querySelector('.node-state').textContent = '已完成，结果可用';
+      hiddenQueue.classList.add('done');
+      outQueue.classList.add('done');
+    }
+  }
+  setInterval(syncNodeManager, 100);
+})();
+</script>
+<script>
+(() => {
+  function explainFineEvent() {
+    const event = document.querySelector('.event.active b')?.textContent || '';
+    const detail = document.getElementById('kernel')?.textContent || '';
+    const panel = document.getElementById('inspect');
+    if (!panel) return;
+    const messages = {
+      node_ready: ['Node 已准备好', 'Executor 已确认输入依赖存在，Node 可以进入调度队列。', '不会启动 GPU；只是把 Node 标记为 ready。'],
+      inputs_ready: ['输入已取出', 'Executor 已从 Graph 取到输入 Tensor，并把它们交给 MetalBackend。', '此时读取输入，不修改输出。'],
+      device_ready: ['Metal 设备已就绪', '本机 M2 的 Metal device 已创建，后续命令会提交到它。', '还没有 GPU 线程；这是设备初始化。'],
+      pipeline_ready: ['GPU kernel 已编译', 'matmul_kernel 和 add_kernel 已变成 GPU 可以执行的 pipeline。', '还没有 dispatch；只是准备好程序。'],
+      input_buffer_created: ['输入 buffer 已创建', `Metal 为 ${detail} 创建了输入 MTLBuffer。`, `${detail} 的 ${document.querySelector('.fact b:nth-of-type(5)')?.textContent || '字节'} 数据可被 GPU 读取。`],
+      output_buffer_created: ['输出 buffer 已创建', `Metal 为 ${detail} 申请了输出位置。`, 'GPU 之后会把计算结果写入这里。'],
+      buffer_allocated: ['Runtime 输出空间已分配', `MemoryPool 为 ${detail} 分配了输出 Tensor。`, '这是 Runtime 的 Tensor 内存；随后 Metal 还会准备对应的 MTLBuffer。'],
+      command_buffer_created: ['Command buffer 已创建', 'Metal 建立了一张“待执行命令单”，接下来把 kernel 和 buffer 填进去。', '此时 GPU 还没有开始跑。'],
+      encoder_configured: ['Compute encoder 已配置', `已绑定 ${detail} 中的输入、输出和参数 buffer。`, 'GPU 线程还没启动，任务正在组装。'],
+      dispatch_configured: ['线程网格已配置', `已确定 ${detail} 的 grid 和 threadgroup 大小。`, '这一步决定总共有多少线程、每组多少线程。'],
+      copy_back_started: ['开始回传', `开始把 ${detail} 从 Metal buffer 复制回 Runtime Tensor。`, 'GPU 线程已结束，当前执行的是 CPU 可见结果回传。'],
+      copy_back_completed: ['回传完成', `${detail} 已经回到 Graph 中的 Tensor。`, '下一个 Graph Node 现在可以读取这个结果。']
+    };
+    const item = messages[event];
+    if (!item) return;
+    panel.innerHTML = `<div class="gpu-explain"><div class="gpu-step"><b>${item[0]}</b>${item[1]}</div><div class="gpu-step mem"><b>内存变化</b>${item[2]}</div><div class="gpu-step thread"><b>线程调度</b>${event === 'dispatch_configured' ? '线程网格已排队，下一事件是 kernel_submitted。' : '没有新的 GPU 计算线程；这是执行准备或结果回传阶段。'}</div></div>`;
+  }
+  setInterval(explainFineEvent, 100);
+})();
+</script>
+<script>
+(() => {
+  function sizeTimeline() {
+    const rail = document.getElementById('rail');
+    if (!rail) return;
+    const count = rail.querySelectorAll('.event').length;
+    rail.style.width = 'auto';
+  }
+  setInterval(sizeTimeline, 100);
+})();
+</script>
+<script>
+(() => {
+  const plain = {
+    run_start: '程序开场：准备执行这张计算图', device_ready: 'M2 GPU 设备就位', pipeline_ready: '两种 GPU 计算程序准备好',
+    node_ready: 'Node 进入 Executor 队列', node_start: 'Executor 开始处理 Node', inputs_ready: '输入 Tensor 已取到',
+    buffer_allocated: 'Runtime 留出结果空间', input_buffer_created: '输入送进 Metal buffer', output_buffer_created: '输出位置准备好',
+    command_buffer_created: '创建 GPU 命令单', encoder_configured: '把数据和参数绑定上', dispatch_configured: '安排线程格子',
+    kernel_submitted: '发车：GPU 开始计算', kernel_completed: 'GPU 计算完成', copy_back_started: '开始把答案端回来',
+    copy_back_completed: '答案回到 Runtime Tensor', node_complete: '这个 Node 完成', run_complete: '整张计算图完成'
+  };
+  function phase(event) {
+    if (['run_start','node_ready','node_start','inputs_ready','node_complete'].includes(event)) return 'graph';
+    if (['device_ready','pipeline_ready','buffer_allocated','input_buffer_created','output_buffer_created','command_buffer_created','encoder_configured','dispatch_configured'].includes(event)) return 'metal';
+    if (['kernel_submitted','kernel_completed'].includes(event)) return 'gpu';
+    return 'return';
+  }
+  function decorateTimeline() {
+    const rail = document.getElementById('rail');
+    if (!rail) return;
+    const timeline = rail.parentElement;
+    if (!timeline.querySelector('.timeline-intro')) {
+      const intro = document.createElement('div');
+      intro.className = 'timeline-intro';
+      intro.innerHTML = '<b>执行旅程</b><span class="phase-chip graph">① Graph / Executor</span><span class="phase-chip metal">② Metal 准备</span><span class="phase-chip gpu">③ GPU 计算</span><span class="phase-chip return">④ 结果回传</span>';
+      timeline.insertBefore(intro, rail);
+    }
+    rail.style.width = 'auto';
+    rail.querySelectorAll('.event').forEach(card => {
+      const event = card.querySelector('b')?.textContent || '';
+      card.dataset.phase = phase(event);
+      card.setAttribute('aria-label', `${event}：${plain[event] || event}`);
+      if (!card.querySelector('.event-plain')) {
+        const label = document.createElement('span');
+        label.className = 'event-plain';
+        label.textContent = plain[event] || event;
+        card.appendChild(label);
+      }
+    });
+  }
+  setInterval(decorateTimeline, 100);
+})();
+</script>
+<script>
+(() => {
+  const plain = {executor:'Executor / Graph 调度',metal:'Metal / 命令准备',gpu:'GPU / Kernel 执行',memory:'Memory / Buffer 与回传'};
+  function csvRows(text){const rows=[];let row=[],cell='',quote=false;for(let i=0;i<text.length;i++){const c=text[i],n=text[i+1];if(c==='"'&&quote&&n==='"'){cell+='"';i++;}else if(c==='"')quote=!quote;else if(c===','&&!quote){row.push(cell);cell='';}else if((c==='\n'||c==='\r')&&!quote){if(c==='\r'&&n==='\n')i++;row.push(cell);if(row.length&&row[0]&&!row[0].startsWith('#'))rows.push(row);row=[];cell='';}else cell+=c;}if(cell||row.length){row.push(cell);rows.push(row)}return rows;}
+  function lane(event){if(['run_start','node_ready','node_start','inputs_ready','node_complete','run_complete'].includes(event))return'executor';if(['kernel_submitted','kernel_completed'].includes(event))return'gpu';if(['buffer_allocated','input_buffer_created','output_buffer_created','copy_back_started','copy_back_completed'].includes(event))return'memory';return'metal';}
+  function ensureView(){const timeline=document.querySelector('.timeline');if(!timeline||document.querySelector('.trace-view'))return null;const view=document.createElement('section');view.className='trace-view';view.innerHTML='<h2>运行轨迹：像看 GPU Profiler 一样读懂它</h2><p>每一条横线代表一个“工位”。左边是 Graph/Executor，右边是 Metal 和 GPU；绿色轨道专门显示内存进出。</p><div class="trace-legend"><span class="executor">Graph / Executor</span><span class="metal">Metal 准备</span><span class="gpu">GPU Kernel</span><span class="memory">Memory Buffer</span></div><div class="trace-scroll"><div class="trace-inner"><div class="trace-ruler" id="traceRuler"></div><div id="traceLanes"></div></div></div>';timeline.parentNode.insertBefore(view,timeline);return view;}
+  function draw(events){const view=ensureView();if(!view)return;const first=Date.parse(events[0]._time),last=Date.parse(events[events.length-1]._time),span=Math.max(1,last-first);const ruler=document.getElementById('traceRuler');ruler.innerHTML=[0,25,50,75,100].map(x=>`<span style="left:${x}%">${Math.round(span*x/100)} ms</span>`).join('');const lanes={executor:[],metal:[],gpu:[],memory:[]};events.forEach((event,index)=>lanes[lane(event)].push({...event,index}));const labels={executor:'① Graph / Executor',metal:'② Metal Queue',gpu:'③ GPU Queue',memory:'④ Memory'};document.getElementById('traceLanes').innerHTML=Object.entries(lanes).map(([kind,items])=>`<div class="track-lane"><div class="track-label"><b>${labels[kind]}</b><span>${plain[kind]}</span></div><div class="track-area">${items.map((event,i)=>{const time=Date.parse(event._time),duration=Number(event.duration_ms||0),start=duration?time-duration:time,next=items[i+1]?Date.parse(items[i+1]._time):last;const left=Math.max(0,Math.min(99,(start-first)/span*100)),width=Math.max(.8,Math.min(100-left,((duration||Math.max(1,next-time))/span)*100));return `<div class="trace-bar ${kind}" style="left:${left}%;width:${width}%" title="${event.event} · ${event.detail||''} · ${event.bytes||0} B · ${duration.toFixed(3)} ms">${event.event}</div>`}).join('')}</div></div>`).join('');}
+  async function loadTrace(){try{const api=document.getElementById('api')?.value.replace(/\/$/,'')||'/influx',org=document.getElementById('org')?.value||'mini-runtime',bucket=document.getElementById('bucket')?.value||'mini-runtime',token=document.getElementById('token')?.value||'mini-runtime-local-token';const query=`from(bucket: "${bucket}") |> range(start: -24h) |> filter(fn: (r) => r._measurement == "runtime_trace") |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value") |> group(columns: []) |> sort(columns: ["_time"])`;const response=await fetch(`${api}/api/v2/query?org=${encodeURIComponent(org)}`,{method:'POST',headers:{Authorization:`Token ${token}`,'Content-Type':'application/vnd.flux',Accept:'application/csv'},body:query});if(!response.ok)return;const rows=csvRows(await response.text()),head=rows.findIndex(row=>row.includes('_time'));if(head<0)return;const headers=rows[head],all=rows.slice(head+1).map(row=>Object.fromEntries(headers.map((key,i)=>[key,row[i]||'']))).filter(event=>event.event).sort((a,b)=>Date.parse(a._time)-Date.parse(b._time));if(!all.length)return;const latest=all[all.length-1].run_id;draw(all.filter(event=>event.run_id===latest));}catch(error){console.warn('trace view unavailable',error);}}
+  setTimeout(loadTrace,500);setInterval(loadTrace,3000);
+})();
+</script>
+<script>
+(() => {
+  function fallbackTraceView() {
+    const rail=document.getElementById('rail');
+    if(!rail)return;
+    let view=document.querySelector('.trace-view');
+    if(!view){view=document.createElement('section');view.className='trace-view';view.innerHTML='<h2>运行轨迹：像看 GPU Profiler 一样读懂它</h2><p>每一条横线代表一个“工位”。左边是 Graph/Executor，右边是 Metal 和 GPU；绿色轨道专门显示内存进出。</p><div class="trace-legend"><span class="executor">Graph / Executor</span><span class="metal">Metal 准备</span><span class="gpu">GPU Kernel</span><span class="memory">Memory Buffer</span></div><div class="trace-scroll"><div class="trace-inner"><div class="trace-ruler"><span style="left:0">开始</span><span style="left:50%">中间</span><span style="left:100%">完成</span></div><div id="fallbackTraceLanes"></div></div></div>';rail.parentNode.insertBefore(view,rail.parentNode.querySelector('.timeline-hint'));}
+    const cards=[...rail.querySelectorAll('.event')];if(!cards.length)return;const lanes={executor:[],metal:[],gpu:[],memory:[]};const laneOf=e=>['run_start','node_ready','node_start','inputs_ready','node_complete','run_complete'].includes(e)?'executor':['kernel_submitted','kernel_completed'].includes(e)?'gpu':['buffer_allocated','input_buffer_created','output_buffer_created','copy_back_started','copy_back_completed'].includes(e)?'memory':'metal';cards.forEach((card,index)=>{const event=card.querySelector('b')?.textContent||'';lanes[laneOf(event)].push({event,index})});const labels={executor:'① Graph / Executor',metal:'② Metal Queue',gpu:'③ GPU Queue',memory:'④ Memory'};document.getElementById('fallbackTraceLanes').innerHTML=Object.entries(lanes).map(([kind,items])=>`<div class="track-lane"><div class="track-label"><b>${labels[kind]}</b><span>每个工位的执行顺序</span></div><div class="track-area">${items.map(item=>`<div class="trace-bar ${kind}" style="left:${item.index/cards.length*100}%;width:${Math.max(1,96/cards.length)}%" title="${item.event}">${item.event}</div>`).join('')}</div></div>`).join('');
+  }
+  setInterval(fallbackTraceView,200);
+})();
+</script>
+<script>
+(() => {
+  const phaseNames={graph:'① Graph / Executor',metal:'② Metal 准备',gpu:'③ GPU 计算',return:'④ 结果回传'};
+  const phaseOf=event=>['run_start','node_ready','node_start','inputs_ready','node_complete','run_complete'].includes(event)?'graph':['kernel_submitted','kernel_completed'].includes(event)?'gpu':['buffer_allocated','input_buffer_created','output_buffer_created','copy_back_started','copy_back_completed'].includes(event)?'return':'metal';
+  function compactJourney(){const rail=document.getElementById('rail');if(!rail)return;const cards=[...rail.querySelectorAll(':scope > .event')];if(!cards.length)return;if(rail.querySelector('.journey-phase'))return;rail.classList.add('compact-journey');const groups={graph:[],metal:[],gpu:[],return:[]};cards.forEach(card=>{const event=card.querySelector('b')?.textContent||'';groups[phaseOf(event)].push(card)});Object.entries(groups).forEach(([kind,items])=>{const group=document.createElement('div');group.className='journey-phase';group.innerHTML=`<h3>${phaseNames[kind]}</h3>`;items.forEach(card=>group.appendChild(card));rail.appendChild(group)});}
+  setInterval(compactJourney,150);
+})();
+</script></body></html>

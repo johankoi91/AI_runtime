@@ -3,6 +3,7 @@
 #include <string_view>
 
 #include "runtime/memory_pool.h"
+#include "runtime/trace.h"
 #include "runtime/tensor.h"
 
 namespace runtime {
@@ -28,6 +29,8 @@ class Backend {
       const Tensor& lhs,
       const Tensor& rhs,
       MemoryPool& pool) const = 0;
+
+  virtual void set_trace_sink(TraceSink* sink) const { (void)sink; }
 };
 
 }  // namespace runtime

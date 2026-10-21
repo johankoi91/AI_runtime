@@ -1,5 +1,7 @@
 #pragma once
 
+#include <iosfwd>
+
 #include "runtime/backend.h"
 #include "runtime/graph.h"
 
@@ -12,12 +14,25 @@ namespace runtime {
 // 它只是一个最小可理解的“图执行器”。
 class Executor {
  public:
-  explicit Executor(const Backend& backend) : backend_(backend) {}
+  explicit Executor(
+      const Backend& backend,
+      std::ostream* logger = nullptr,
+      TraceSink* trace = nullptr)
+      : backend_(backend), logger_(logger), trace_(trace) {
+    backend_.set_trace_sink(trace_);
+  }
 
   void run(Graph& graph, MemoryPool& pool) const;
+  void set_logger(std::ostream* logger) { logger_ = logger; }
+  void set_trace_sink(TraceSink* trace) {
+    trace_ = trace;
+    backend_.set_trace_sink(trace_);
+  }
 
  private:
   const Backend& backend_;
+  std::ostream* logger_ = nullptr;
+  TraceSink* trace_ = nullptr;
 };
 
 }  // namespace runtime
