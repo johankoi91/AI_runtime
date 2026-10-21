@@ -92,5 +92,30 @@ int main() {
     return 1;
   }
   std::cout << "Metal activation test passed (max error=" << max_error << ")\n";
+
+  runtime::Tensor gru_input = runtime::Tensor::from_vector({2}, {0.3f, -0.7f});
+  runtime::Tensor gru_hidden = runtime::Tensor::from_vector({3}, {0.1f, -0.2f, 0.4f});
+  runtime::Tensor gru_input_weights = runtime::Tensor::from_vector(
+      {9, 2}, {0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f, 0.9f,
+               1.0f, 1.1f, 1.2f, 1.3f, 1.4f, 1.5f, 1.6f, 1.7f, 1.8f});
+  runtime::Tensor gru_hidden_weights = runtime::Tensor::from_vector(
+      {9, 3}, {0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f, 0.9f,
+               1.0f, 1.1f, 1.2f, 1.3f, 1.4f, 1.5f, 1.6f, 1.7f, 1.8f,
+               1.9f, 2.0f, 2.1f, 2.2f, 2.3f, 2.4f, 2.5f, 2.6f, 2.7f});
+  runtime::Tensor gru_bias = runtime::Tensor::from_vector(
+      {9}, {0.01f, 0.02f, 0.03f, 0.04f, 0.05f, 0.06f, 0.07f, 0.08f, 0.09f});
+  runtime::Tensor gpu_gru = backend.gru_step(
+      gru_input, gru_hidden, gru_input_weights, gru_hidden_weights, gru_bias, pool);
+  runtime::Tensor cpu_gru = runtime::cpu::gru_step(
+      gru_input, gru_hidden, gru_input_weights, gru_hidden_weights, gru_bias);
+  max_error = 0.0f;
+  for (std::size_t index = 0; index < 3; ++index) {
+    max_error = std::max(max_error, std::fabs(gpu_gru.data<float>()[index] - cpu_gru.data<float>()[index]));
+  }
+  if (max_error > 1e-6f) {
+    std::cerr << "Metal GRU mismatch: max error=" << max_error << "\n";
+    return 1;
+  }
+  std::cout << "Metal GRU test passed (max error=" << max_error << ")\n";
   return 0;
 }

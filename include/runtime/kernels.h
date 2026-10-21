@@ -19,5 +19,12 @@ Tensor add(const Tensor& lhs, const Tensor& rhs, MemoryPool* pool = nullptr);
 Tensor matmul(const Tensor& lhs, const Tensor& rhs, MemoryPool* pool = nullptr);
 Tensor sigmoid(const Tensor& input, MemoryPool* pool = nullptr);
 Tensor tanh(const Tensor& input, MemoryPool* pool = nullptr);
+Tensor gru_step(
+    const Tensor& input,
+    const Tensor& hidden,
+    const Tensor& input_weights,
+    const Tensor& hidden_weights,
+    const Tensor& bias,
+    MemoryPool* pool = nullptr);
 
 }  // namespace runtime::cpu

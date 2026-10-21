@@ -97,6 +97,40 @@ kernel void tanh_kernel(
     output[index] = tanh(input[index]);
   }
 }
+
+kernel void gru_step_kernel(
+    device const float* input [[buffer(0)]],
+    device const float* hidden [[buffer(1)]],
+    device const float* input_weights [[buffer(2)]],
+    device const float* hidden_weights [[buffer(3)]],
+    device const float* bias [[buffer(4)]],
+    device float* output [[buffer(5)]],
+    constant uint& input_size [[buffer(6)]],
+    constant uint& hidden_size [[buffer(7)]],
+    uint unit [[thread_position_in_grid]]) {
+  if (unit >= hidden_size) {
+    return;
+  }
+  float update = bias[unit];
+  float reset = bias[hidden_size + unit];
+  float candidate = bias[2 * hidden_size + unit];
+  float recurrent_candidate = 0.0f;
+  for (uint index = 0; index < input_size; ++index) {
+    update += input_weights[unit * input_size + index] * input[index];
+    reset += input_weights[(hidden_size + unit) * input_size + index] * input[index];
+    candidate += input_weights[(2 * hidden_size + unit) * input_size + index] * input[index];
+  }
+  for (uint index = 0; index < hidden_size; ++index) {
+    update += hidden_weights[unit * hidden_size + index] * hidden[index];
+    reset += hidden_weights[(hidden_size + unit) * hidden_size + index] * hidden[index];
+    recurrent_candidate +=
+        hidden_weights[(2 * hidden_size + unit) * hidden_size + index] * hidden[index];
+  }
+  update = 1.0f / (1.0f + exp(-update));
+  reset = 1.0f / (1.0f + exp(-reset));
+  candidate = tanh(candidate + reset * recurrent_candidate);
+  output[unit] = update * hidden[unit] + (1.0f - update) * candidate;
+}
 )metal";
 
 void check_status(id<MTLCommandBuffer> command_buffer, const char* operation) {
@@ -128,6 +162,7 @@ struct MetalBackend::Impl {
   id<MTLComputePipelineState> stft_pipeline = nil;
   id<MTLComputePipelineState> sigmoid_pipeline = nil;
   id<MTLComputePipelineState> tanh_pipeline = nil;
+  id<MTLComputePipelineState> gru_pipeline = nil;
   TraceSink* trace = nullptr;
 };
 
@@ -156,6 +191,7 @@ MetalBackend::MetalBackend() : impl_(std::make_unique<Impl>()) {
   id<MTLFunction> stft_function = [library newFunctionWithName:@"stft_kernel"];
   id<MTLFunction> sigmoid_function = [library newFunctionWithName:@"sigmoid_kernel"];
   id<MTLFunction> tanh_function = [library newFunctionWithName:@"tanh_kernel"];
+  id<MTLFunction> gru_function = [library newFunctionWithName:@"gru_step_kernel"];
   impl_->add_pipeline = [impl_->device newComputePipelineStateWithFunction:add_function error:&error];
   if (impl_->add_pipeline == nil) {
     throw std::runtime_error("MetalBackend: failed to create add pipeline");
@@ -176,6 +212,11 @@ MetalBackend::MetalBackend() : impl_(std::make_unique<Impl>()) {
       [impl_->device newComputePipelineStateWithFunction:tanh_function error:&error];
   if (impl_->sigmoid_pipeline == nil || impl_->tanh_pipeline == nil) {
     throw std::runtime_error("MetalBackend: failed to create activation pipelines");
+  }
+  impl_->gru_pipeline =
+      [impl_->device newComputePipelineStateWithFunction:gru_function error:&error];
+  if (impl_->gru_pipeline == nil) {
+    throw std::runtime_error("MetalBackend: failed to create gru pipeline");
   }
 }
 
@@ -428,6 +469,62 @@ Tensor MetalBackend::sigmoid(const Tensor& input, MemoryPool& pool) const {
 Tensor MetalBackend::tanh(const Tensor& input, MemoryPool& pool) const {
   return metal_activation(
       impl_->device, impl_->queue, impl_->tanh_pipeline, input, pool, "tanh");
+}
+
+Tensor MetalBackend::gru_step(
+    const Tensor& input,
+    const Tensor& hidden,
+    const Tensor& input_weights,
+    const Tensor& hidden_weights,
+    const Tensor& bias,
+    MemoryPool& pool) const {
+  if (input.dtype() != DType::Float32 || hidden.dtype() != DType::Float32 ||
+      input_weights.dtype() != DType::Float32 || hidden_weights.dtype() != DType::Float32 ||
+      bias.dtype() != DType::Float32 || !input.is_contiguous() || !hidden.is_contiguous() ||
+      !input_weights.is_contiguous() || !hidden_weights.is_contiguous() || !bias.is_contiguous()) {
+    throw std::invalid_argument("metal::gru_step requires contiguous float32 tensors");
+  }
+  if (input.rank() != 1 || hidden.rank() != 1 || input_weights.rank() != 2 ||
+      hidden_weights.rank() != 2 || bias.rank() != 1) {
+    throw std::invalid_argument("metal::gru_step has invalid tensor ranks");
+  }
+  const std::size_t input_size = input.shape()[0];
+  const std::size_t hidden_size = hidden.shape()[0];
+  if (input_weights.shape() != Shape{3 * hidden_size, input_size} ||
+      hidden_weights.shape() != Shape{3 * hidden_size, hidden_size} ||
+      bias.shape() != Shape{3 * hidden_size}) {
+    throw std::invalid_argument("metal::gru_step weight shapes do not match input and hidden sizes");
+  }
+  Tensor output = pool.allocate_tensor({hidden_size}, DType::Float32);
+  id<MTLBuffer> input_buffer = make_input_buffer(impl_->device, input);
+  id<MTLBuffer> hidden_buffer = make_input_buffer(impl_->device, hidden);
+  id<MTLBuffer> input_weights_buffer = make_input_buffer(impl_->device, input_weights);
+  id<MTLBuffer> hidden_weights_buffer = make_input_buffer(impl_->device, hidden_weights);
+  id<MTLBuffer> bias_buffer = make_input_buffer(impl_->device, bias);
+  id<MTLBuffer> output_buffer =
+      [impl_->device newBufferWithLength:output.nbytes() options:MTLResourceStorageModeShared];
+  const uint32_t input_count = static_cast<uint32_t>(input_size);
+  const uint32_t hidden_count = static_cast<uint32_t>(hidden_size);
+  id<MTLCommandBuffer> command_buffer = [impl_->queue commandBuffer];
+  id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
+  [encoder setComputePipelineState:impl_->gru_pipeline];
+  [encoder setBuffer:input_buffer offset:0 atIndex:0];
+  [encoder setBuffer:hidden_buffer offset:0 atIndex:1];
+  [encoder setBuffer:input_weights_buffer offset:0 atIndex:2];
+  [encoder setBuffer:hidden_weights_buffer offset:0 atIndex:3];
+  [encoder setBuffer:bias_buffer offset:0 atIndex:4];
+  [encoder setBuffer:output_buffer offset:0 atIndex:5];
+  [encoder setBytes:&input_count length:sizeof(input_count) atIndex:6];
+  [encoder setBytes:&hidden_count length:sizeof(hidden_count) atIndex:7];
+  const NSUInteger threads = std::min<NSUInteger>(
+      impl_->gru_pipeline.maxTotalThreadsPerThreadgroup, 256);
+  [encoder dispatchThreads:MTLSizeMake(hidden_size, 1, 1)
+      threadsPerThreadgroup:MTLSizeMake(threads, 1, 1)];
+  [encoder endEncoding];
+  [command_buffer commit];
+  check_status(command_buffer, "metal::gru_step");
+  copy_output(output_buffer, output);
+  return output;
 }
 
 }  // namespace runtime

@@ -19,6 +19,7 @@ add_library(mini_runtime
   src/backend/cpu_backend.cpp
   src/kernels/cpu/add.cpp
   src/kernels/cpu/activations.cpp
+  src/kernels/cpu/gru.cpp
   src/kernels/cpu/matmul.cpp
 )
 

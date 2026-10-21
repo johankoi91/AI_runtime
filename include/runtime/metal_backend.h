@@ -28,6 +28,13 @@ class MetalBackend final : public Backend {
       MemoryPool& pool) const;
   Tensor sigmoid(const Tensor& input, MemoryPool& pool) const;
   Tensor tanh(const Tensor& input, MemoryPool& pool) const;
+  Tensor gru_step(
+      const Tensor& input,
+      const Tensor& hidden,
+      const Tensor& input_weights,
+      const Tensor& hidden_weights,
+      const Tensor& bias,
+      MemoryPool& pool) const;
   void set_trace_sink(TraceSink* sink) const override;
 
  private:
