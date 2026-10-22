@@ -52,6 +52,8 @@ HushGraphReport inspect_hush_graph(const OnnxGraph& graph) {
       "Reshape", "Transpose", "Concat", "Flatten"};
   HushGraphReport report;
   report.node_count = graph.nodes.size();
+  report.has_inputs = !graph.inputs.empty();
+  report.has_outputs = !graph.outputs.empty();
   for (const OnnxNode& node : graph.nodes) {
     report.op_types.push_back(node.op_type);
     if (std::find(supported.begin(), supported.end(), node.op_type) == supported.end() &&
@@ -61,6 +63,21 @@ HushGraphReport inspect_hush_graph(const OnnxGraph& graph) {
     }
   }
   return report;
+}
+
+void validate_hush_model(const HushModel& model) {
+  model.config.validate();
+  const HushGraphReport reports[] = {
+      inspect_hush_graph(model.encoder),
+      inspect_hush_graph(model.erb_decoder),
+      inspect_hush_graph(model.df_decoder),
+  };
+  for (const HushGraphReport& report : reports) {
+    if (report.node_count == 0 || !report.has_inputs || !report.has_outputs ||
+        !report.unsupported_ops.empty()) {
+      throw std::invalid_argument("Hush model graph violates the runtime graph contract");
+    }
+  }
 }
 
 HushConfig HushConfig::from_ini(const std::string& ini) {
@@ -107,6 +124,7 @@ HushModel HushModel::load(const std::string& path) {
   model.encoder = read_graph_entry(bundle, "enc.onnx");
   model.erb_decoder = read_graph_entry(bundle, "erb_dec.onnx");
   model.df_decoder = read_graph_entry(bundle, "df_dec.onnx");
+  validate_hush_model(model);
   return model;
 }
 

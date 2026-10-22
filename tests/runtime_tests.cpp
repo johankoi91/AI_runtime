@@ -390,6 +390,12 @@ std::vector<std::uint8_t> make_minimal_onnx(const std::string& op_type) {
   std::vector<std::uint8_t> graph;
   append_field(graph, 1, node);
   append_field(graph, 2, {'g'});
+  std::vector<std::uint8_t> graph_input;
+  append_string_field(graph_input, 1, "x");
+  std::vector<std::uint8_t> graph_output;
+  append_string_field(graph_output, 1, "y");
+  append_field(graph, 3, graph_input);
+  append_field(graph, 6, graph_output);
   std::vector<std::uint8_t> model;
   append_field(model, 7, graph);
   return model;

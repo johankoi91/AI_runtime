@@ -34,8 +34,11 @@ struct HushGraphReport {
   std::size_t node_count = 0;
   std::vector<std::string> op_types;
   std::vector<std::string> unsupported_ops;
+  bool has_inputs = false;
+  bool has_outputs = false;
 };
 
 HushGraphReport inspect_hush_graph(const OnnxGraph& graph);
+void validate_hush_model(const HushModel& model);
 
 }  // namespace runtime
