@@ -104,6 +104,9 @@ if(APPLE)
   set_target_properties(mini_runtime_metal_demo PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin
   )
+  add_executable(hush_mic_demo apps/hush_mic_demo.mm)
+  target_link_libraries(hush_mic_demo PRIVATE mini_runtime "-framework AVFoundation")
+  set_target_properties(hush_mic_demo PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
 endif()
 
 include(CTest)
