@@ -24,6 +24,8 @@ struct OnnxNode {
 
 struct OnnxGraph {
   std::string name;
+  std::vector<std::string> inputs;
+  std::vector<std::string> outputs;
   std::vector<OnnxNode> nodes;
   std::vector<WeightTensor> initializers;
 

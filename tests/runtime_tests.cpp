@@ -277,6 +277,12 @@ void test_onnx_weights(TestContext& ctx) {
   append_field(node, 5, stride_attribute);
   append_field(graph, 1, node);
   append_field(graph, 2, {'g', 'r', 'a', 'p', 'h'});
+  std::vector<std::uint8_t> graph_input;
+  append_string_field(graph_input, 1, "x");
+  std::vector<std::uint8_t> graph_output;
+  append_string_field(graph_output, 1, "z");
+  append_field(graph, 3, graph_input);
+  append_field(graph, 6, graph_output);
   append_field(graph, 5, tensor);
   std::vector<std::uint8_t> model;
   append_field(model, 7, graph);
@@ -292,6 +298,8 @@ void test_onnx_weights(TestContext& ctx) {
   ctx.expect_close(loaded[0].values[1], -2.0f, 1e-6f, "ONNX reader should decode raw float data");
   const runtime::OnnxGraph graph_info = runtime::OnnxWeights::read_graph(path);
   ctx.expect_true(graph_info.name == "graph", "ONNX reader should preserve graph name");
+  ctx.expect_true(graph_info.inputs == std::vector<std::string>({"x"}), "ONNX reader should preserve graph inputs");
+  ctx.expect_true(graph_info.outputs == std::vector<std::string>({"z"}), "ONNX reader should preserve graph outputs");
   ctx.expect_true(graph_info.nodes.size() == 1, "ONNX reader should preserve node count");
   ctx.expect_true(graph_info.nodes[0].op_type == "Add", "ONNX reader should preserve node op type");
   ctx.expect_true(graph_info.nodes[0].inputs.size() == 2 && graph_info.nodes[0].outputs[0] == "z",
@@ -437,6 +445,8 @@ void test_hush_stream_session(TestContext& ctx) {
   node.inputs = {"x", "h"};
   node.outputs = {"y"};
   model.encoder.nodes.push_back(node);
+  model.encoder.inputs = {"x", "h"};
+  model.encoder.outputs = {"y"};
   runtime::CPUBackend backend;
   runtime::HushStreamSession session(model, backend, {{"h", "y"}});
   runtime::MemoryPool pool;
@@ -448,6 +458,14 @@ void test_hush_stream_session(TestContext& ctx) {
   ctx.expect_close(first.at("y").data<float>()[0], 11.0f, 1e-6f, "session first state output");
   ctx.expect_true(session.frame_index() == 1, "session should count first frame");
   ctx.expect_true(session.has_state("h"), "session should retain encoder state");
+
+  bool missing_input_rejected = false;
+  try {
+    session.process_encoder({{"h", runtime::Tensor::from_vector({2}, {0.0f, 0.0f})}}, pool);
+  } catch (const std::runtime_error&) {
+    missing_input_rejected = true;
+  }
+  ctx.expect_true(missing_input_rejected, "session should reject missing encoder input");
 
   pool.reset();
   const auto second = session.process_encoder(

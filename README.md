@@ -80,6 +80,10 @@
   - `HushStreamSession` 流式 encoder 执行入口
   - hidden state 的首帧注入、后续帧自动回灌和 reset
   - frame counter 与 state binding 自测
+- Hush 接入阶段 19：
+  - 解析 ONNX graph 的正式输入和输出名称
+  - Hush session 执行前校验必需 encoder 输入
+  - 用 fixture 验证输入输出元数据和缺失输入拒绝
 - Hush 接入阶段 18：
   - `AudioFrame` 接入流式 encoder session
   - 强制 Hush 的 16 kHz、单声道、160 samples/frame 契约
@@ -202,7 +206,7 @@ ctest --test-dir build-stage --output-on-failure
 git diff --check
 ```
 
-阶段 1 额外覆盖音频帧边界、音频格式、权重文件 round-trip 和权重元数据校验。阶段 2 增加 STFT/ISTFT 的 bin 数、采样数和有效重叠区 round-trip 检查。阶段 3 增加 CPU/Metal STFT 最大误差检查，本机验证值为 `0.000154613`。阶段 4 增加 CPU/Metal sigmoid/tanh 对齐检查，本机最大误差为 `1.19e-7`。阶段 5 增加单步 GRU 对齐检查，本机最大误差为 `4.47e-8`。阶段 6 增加 Conv2D 对齐检查，本机最大误差为 `0`。阶段 7 增加 ConvTranspose2D 对齐检查，本机最大误差为 `0`。阶段 8 增加 ERB 投影和 ExponentialUnitNorm 对齐检查，最大误差分别为 `1.19e-7` 和 `0`。阶段 9 使用最小 ONNX fixture 验证 initializer 读取。阶段 10 使用最小 tar.gz fixture 验证 bundle 解压和条目读取。阶段 11 使用 ONNX fixture 验证 graph 和 node 元数据读取。阶段 12 验证 Hush 三张子图和 config 的聚合加载。阶段 13 使用 ONNX fixture 验证 AttributeProto 和按名权重映射。阶段 14 验证 ONNX `Add` 节点通过统一执行器调用 backend。阶段 15 验证 Conv、激活和单步 GRU 节点分发。阶段 16 验证 Reshape、Transpose、Concat 和 Flatten 的连接层变换。阶段 17 验证 state binding 在多帧 encoder 执行中的注入、回灌和 reset。阶段 18 验证 16 kHz 单声道 160 samples/frame 契约和非法音频帧拒绝。下一阶段接入真实 Hush encoder 的输入输出命名和模型 graph 约束。
+阶段 1 额外覆盖音频帧边界、音频格式、权重文件 round-trip 和权重元数据校验。阶段 2 增加 STFT/ISTFT 的 bin 数、采样数和有效重叠区 round-trip 检查。阶段 3 增加 CPU/Metal STFT 最大误差检查，本机验证值为 `0.000154613`。阶段 4 增加 CPU/Metal sigmoid/tanh 对齐检查，本机最大误差为 `1.19e-7`。阶段 5 增加单步 GRU 对齐检查，本机最大误差为 `4.47e-8`。阶段 6 增加 Conv2D 对齐检查，本机最大误差为 `0`。阶段 7 增加 ConvTranspose2D 对齐检查，本机最大误差为 `0`。阶段 8 增加 ERB 投影和 ExponentialUnitNorm 对齐检查，最大误差分别为 `1.19e-7` 和 `0`。阶段 9 使用最小 ONNX fixture 验证 initializer 读取。阶段 10 使用最小 tar.gz fixture 验证 bundle 解压和条目读取。阶段 11 使用 ONNX fixture 验证 graph 和 node 元数据读取。阶段 12 验证 Hush 三张子图和 config 的聚合加载。阶段 13 使用 ONNX fixture 验证 AttributeProto 和按名权重映射。阶段 14 验证 ONNX `Add` 节点通过统一执行器调用 backend。阶段 15 验证 Conv、激活和单步 GRU 节点分发。阶段 16 验证 Reshape、Transpose、Concat 和 Flatten 的连接层变换。阶段 17 验证 state binding 在多帧 encoder 执行中的注入、回灌和 reset。阶段 18 验证 16 kHz 单声道 160 samples/frame 契约和非法音频帧拒绝。阶段 19 验证 ONNX graph 输入输出名称读取和 session 缺失输入拒绝。下一阶段接入真实 Hush encoder 的输入输出命名和模型 graph 约束。
 
 ## 当前能力边界
 

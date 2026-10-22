@@ -172,6 +172,18 @@ std::string parse_string(const std::vector<std::uint8_t>& bytes) {
   return std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size());
 }
 
+std::string parse_value_info_name(const std::vector<std::uint8_t>& bytes) {
+  Reader reader{bytes};
+  while (!reader.done()) {
+    const std::uint64_t key = reader.varint();
+    const unsigned field = static_cast<unsigned>(key >> 3);
+    const unsigned wire = static_cast<unsigned>(key & 7);
+    if (field == 1 && wire == 2) return parse_string(reader.length_delimited());
+    reader.skip(wire);
+  }
+  return {};
+}
+
 OnnxNode parse_node(const std::vector<std::uint8_t>& bytes) {
   Reader reader{bytes};
   OnnxNode node;
@@ -218,7 +230,9 @@ OnnxGraph parse_graph(const std::vector<std::uint8_t>& bytes) {
     const unsigned wire = static_cast<unsigned>(key & 7);
     if (field == 1 && wire == 2) graph.nodes.push_back(parse_node(reader.length_delimited()));
     else if (field == 2 && wire == 2) graph.name = parse_string(reader.length_delimited());
+    else if (field == 3 && wire == 2) graph.inputs.push_back(parse_value_info_name(reader.length_delimited()));
     else if (field == 5 && wire == 2) graph.initializers.push_back(parse_tensor(reader.length_delimited()));
+    else if (field == 6 && wire == 2) graph.outputs.push_back(parse_value_info_name(reader.length_delimited()));
     else reader.skip(wire);
   }
   return graph;

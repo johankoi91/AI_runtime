@@ -1,5 +1,6 @@
 #include "runtime/hush_session.h"
 
+#include <algorithm>
 #include <stdexcept>
 
 namespace runtime {
@@ -37,6 +38,18 @@ std::unordered_map<std::string, Tensor> HushStreamSession::process_encoder(
     const std::unordered_map<std::string, Tensor>& inputs,
     MemoryPool& pool) {
   std::unordered_map<std::string, Tensor> frame_inputs = inputs;
+  for (const std::string& input_name : model_.encoder.inputs) {
+    bool is_initializer = false;
+    for (const WeightTensor& initializer : model_.encoder.initializers) {
+      is_initializer = is_initializer || initializer.name == input_name;
+    }
+    const bool is_state = std::any_of(
+        encoder_state_bindings_.begin(), encoder_state_bindings_.end(),
+        [&](const StateBinding& binding) { return binding.input_name == input_name; });
+    if (!is_initializer && !is_state && frame_inputs.find(input_name) == frame_inputs.end()) {
+      throw std::runtime_error("Hush encoder input is missing: " + input_name);
+    }
+  }
   for (const StateBinding& binding : encoder_state_bindings_) {
     if (frame_inputs.find(binding.input_name) == frame_inputs.end()) {
       const auto state = state_.find(binding.input_name);
