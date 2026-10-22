@@ -77,6 +77,12 @@ set_target_properties(hush_benchmark PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin
 )
 
+add_executable(hush_stability apps/hush_stability.cpp)
+target_link_libraries(hush_stability PRIVATE mini_runtime)
+set_target_properties(hush_stability PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin
+)
+
 add_executable(hush_inspect apps/hush_inspect.cpp)
 target_link_libraries(hush_inspect PRIVATE mini_runtime)
 set_target_properties(hush_inspect PROPERTIES

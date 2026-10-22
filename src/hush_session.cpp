@@ -7,6 +7,16 @@
 
 namespace runtime {
 
+namespace {
+
+Tensor owned_copy(const Tensor& input) {
+  Tensor output = Tensor::empty(input.shape(), input.dtype());
+  std::copy_n(input.data<float>(), input.numel(), output.data<float>());
+  return output;
+}
+
+}  // namespace
+
 HushStreamSession::HushStreamSession(
     const HushModel& model,
     const Backend& backend,
@@ -72,7 +82,7 @@ std::unordered_map<std::string, Tensor> HushStreamSession::process_encoder(
       throw std::runtime_error(
           "Hush encoder state output is missing: " + binding.output_name);
     }
-    state_[binding.input_name] = output->second;
+    state_[binding.input_name] = owned_copy(output->second);
   }
   ++frame_index_;
   return outputs;
