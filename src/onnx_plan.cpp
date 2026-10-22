@@ -9,6 +9,7 @@ namespace runtime {
 
 OnnxExecutionPlan OnnxExecutionPlan::compile(const OnnxGraph& graph) {
   OnnxExecutionPlan plan;
+  plan.graph_outputs_ = graph.outputs;
   std::unordered_map<std::string, std::size_t> producer;
   for (std::size_t index = 0; index < graph.nodes.size(); ++index) {
     for (const std::string& output : graph.nodes[index].outputs) {
@@ -67,6 +68,10 @@ OnnxExecutionPlan OnnxExecutionPlan::compile(const OnnxGraph& graph) {
 std::size_t OnnxExecutionPlan::output_users(const std::string& value_name) const {
   for (const auto& item : value_users_) if (item.first == value_name) return item.second;
   return 0;
+}
+
+bool OnnxExecutionPlan::is_graph_output(const std::string& value_name) const {
+  return std::find(graph_outputs_.begin(), graph_outputs_.end(), value_name) != graph_outputs_.end();
 }
 
 }  // namespace runtime
