@@ -128,7 +128,18 @@ Tensor CPUBackend::gru_sequence(
     const Tensor& bias,
     MemoryPool& pool) const {
   if (sequence.rank() != 3 || sequence.shape()[1] != 1) throw std::invalid_argument("gru_sequence requires [T,1,I]");
-  Tensor output = pool.allocate_tensor({sequence.shape()[0], 1, initial_hidden.shape()[2]});
+  const std::size_t hidden_size = initial_hidden.shape()[2];
+  const std::size_t input_size = sequence.shape()[2];
+  std::vector<float> input_weight_values(input_weights.data<float>(), input_weights.data<float>() + 3 * hidden_size * input_size);
+  std::vector<float> hidden_weight_values(hidden_weights.data<float>(), hidden_weights.data<float>() + 3 * hidden_size * hidden_size);
+  std::vector<float> bias_values(3 * hidden_size);
+  for (std::size_t index = 0; index < bias_values.size(); ++index) {
+    bias_values[index] = bias.data<float>()[index] + bias.data<float>()[3 * hidden_size + index];
+  }
+  Tensor flat_input_weights = Tensor::from_vector({3 * hidden_size, input_size}, input_weight_values);
+  Tensor flat_hidden_weights = Tensor::from_vector({3 * hidden_size, hidden_size}, hidden_weight_values);
+  Tensor flat_bias = Tensor::from_vector({3 * hidden_size}, bias_values);
+  Tensor output = pool.allocate_tensor({sequence.shape()[0], 1, hidden_size});
   Tensor hidden = Tensor::from_vector({initial_hidden.shape()[2]},
       std::vector<float>(initial_hidden.data<float>(), initial_hidden.data<float>() + initial_hidden.shape()[2]));
   for (std::size_t time = 0; time < sequence.shape()[0]; ++time) {
@@ -136,7 +147,7 @@ Tensor CPUBackend::gru_sequence(
         std::vector<float>(sequence.data<float>() + time * sequence.shape()[2],
                            sequence.data<float>() + (time + 1) * sequence.shape()[2]));
     Tensor step = cpu::gru_step(input, hidden,
-                                input_weights, hidden_weights, bias, &pool);
+                                flat_input_weights, flat_hidden_weights, flat_bias, &pool);
     std::copy_n(step.data<float>(), hidden.shape()[0], output.data<float>() + time * hidden.shape()[0]);
     hidden = Tensor::from_vector(hidden.shape(), std::vector<float>(
         step.data<float>(), step.data<float>() + hidden.shape()[0]));

@@ -307,21 +307,8 @@ Tensor run_gru_step(const Backend& backend, const OnnxNode& node,
       hidden_weights.data<float>(), hidden_weights.data<float>() + 3 * hidden_size * hidden_size));
   Tensor bias = Tensor::from_vector({3 * hidden_size}, bias_values);
   const std::size_t time_steps = sequence.shape()[0];
-  if (std::getenv("HUSH_FUSED_GRU") != nullptr) {
-    Tensor output = backend.gru_sequence(sequence, initial_hidden, input_weights, hidden_weights, biases, pool);
-    return cpu::reshape(output, {time_steps, 1, 1, hidden_size});
-  }
-  Tensor output = pool.allocate_tensor({time_steps, 1, 1, hidden_size});
-  for (std::size_t time = 0; time < time_steps; ++time) {
-    std::vector<float> input_values(input_size);
-    std::copy_n(sequence.data<float>() + time * input_size, input_size, input_values.data());
-    Tensor input = Tensor::from_vector({input_size}, input_values);
-    Tensor step = backend.gru_step(input, hidden, weights, recurrent, bias, pool);
-    std::copy_n(step.data<float>(), hidden_size, output.data<float>() + time * hidden_size);
-    hidden = Tensor::from_vector({hidden_size}, std::vector<float>(
-        step.data<float>(), step.data<float>() + hidden_size));
-  }
-  return output;
+  Tensor output = backend.gru_sequence(sequence, initial_hidden, input_weights, hidden_weights, biases, pool);
+  return cpu::reshape(output, {time_steps, 1, 1, hidden_size});
 }
 
 }  // namespace

@@ -1,4 +1,5 @@
 #include "runtime/metal_backend.h"
+#include "runtime/cpu_backend.h"
 #include "runtime/kernels.h"
 
 #import <Metal/Metal.h>
@@ -908,6 +909,10 @@ Tensor MetalBackend::gru_sequence(
     const Tensor& hidden_weights,
     const Tensor& bias,
     MemoryPool& pool) const {
+  if (std::getenv("HUSH_FUSED_GRU") == nullptr) {
+    CPUBackend cpu_backend;
+    return cpu_backend.gru_sequence(sequence, initial_hidden, input_weights, hidden_weights, bias, pool);
+  }
   if (sequence.rank() != 3 || sequence.shape()[1] != 1 || initial_hidden.rank() != 3 ||
       input_weights.rank() != 3 || hidden_weights.rank() != 3 || bias.rank() != 2) {
     throw std::invalid_argument("metal::gru_sequence has invalid shapes");
