@@ -75,6 +75,13 @@ class Backend {
       const Tensor& hidden_weights,
       const Tensor& bias,
       MemoryPool& pool) const = 0;
+  virtual Tensor gru_sequence(
+      const Tensor& sequence,
+      const Tensor& initial_hidden,
+      const Tensor& input_weights,
+      const Tensor& hidden_weights,
+      const Tensor& bias,
+      MemoryPool& pool) const = 0;
 
   virtual void set_trace_sink(TraceSink* sink) const { (void)sink; }
 };

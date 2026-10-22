@@ -42,6 +42,13 @@ class MetalBackend final : public Backend {
       const Tensor& hidden_weights,
       const Tensor& bias,
       MemoryPool& pool) const override;
+  Tensor gru_sequence(
+      const Tensor& sequence,
+      const Tensor& initial_hidden,
+      const Tensor& input_weights,
+      const Tensor& hidden_weights,
+      const Tensor& bias,
+      MemoryPool& pool) const override;
   Tensor conv_transpose2d(
       const Tensor& input,
       const Tensor& weights,

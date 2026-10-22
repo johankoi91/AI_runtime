@@ -144,6 +144,47 @@ kernel void gru_step_kernel(
   output[unit] = update * hidden[unit] + (1.0f - update) * candidate;
 }
 
+kernel void gru_sequence_kernel(
+    device const float* sequence [[buffer(0)]],
+    device const float* initial_hidden [[buffer(1)]],
+    device const float* input_weights [[buffer(2)]],
+    device const float* hidden_weights [[buffer(3)]],
+    device const float* bias [[buffer(4)]],
+    device float* output [[buffer(5)]],
+    constant uint& time_steps [[buffer(6)]],
+    constant uint& input_size [[buffer(7)]],
+    constant uint& hidden_size [[buffer(8)]],
+    uint unit [[thread_position_in_grid]],
+    uint local_unit [[thread_index_in_threadgroup]]) {
+  if (unit >= hidden_size || hidden_size > 256) return;
+  threadgroup float state[256];
+  threadgroup float next_state[256];
+  state[local_unit] = initial_hidden[local_unit];
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  for (uint time = 0; time < time_steps; ++time) {
+    float update = bias[unit], reset = bias[hidden_size + unit];
+    float candidate = bias[2 * hidden_size + unit], recurrent_candidate = 0.0f;
+    for (uint index = 0; index < input_size; ++index) {
+        const float value = sequence[time * input_size + index];
+      update += input_weights[unit * input_size + index] * value;
+      reset += input_weights[(hidden_size + unit) * input_size + index] * value;
+      candidate += input_weights[(2 * hidden_size + unit) * input_size + index] * value;
+    }
+    for (uint index = 0; index < hidden_size; ++index) {
+      update += hidden_weights[unit * hidden_size + index] * state[index];
+      reset += hidden_weights[(hidden_size + unit) * hidden_size + index] * state[index];
+      recurrent_candidate += hidden_weights[(2 * hidden_size + unit) * hidden_size + index] * state[index];
+    }
+    update = 1.0f / (1.0f + exp(-update));
+    reset = 1.0f / (1.0f + exp(-reset));
+    next_state[unit] = update * state[unit] + (1.0f - update) * tanh(candidate + reset * recurrent_candidate);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    state[unit] = next_state[unit];
+    output[time * hidden_size + unit] = state[unit];
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+  }
+}
+
 kernel void conv2d_kernel(
     device const float* input [[buffer(0)]],
     device const float* weights [[buffer(1)]],
@@ -387,6 +428,7 @@ struct MetalBackend::Impl {
   id<MTLComputePipelineState> tanh_pipeline = nil;
   id<MTLComputePipelineState> relu_pipeline = nil;
   id<MTLComputePipelineState> gru_pipeline = nil;
+  id<MTLComputePipelineState> gru_sequence_pipeline = nil;
   id<MTLComputePipelineState> conv2d_pipeline = nil;
   id<MTLComputePipelineState> conv_transpose2d_pipeline = nil;
   id<MTLComputePipelineState> erb_pipeline = nil;
@@ -438,6 +480,7 @@ MetalBackend::MetalBackend() : impl_(std::make_unique<Impl>()) {
   id<MTLFunction> tanh_function = [library newFunctionWithName:@"tanh_kernel"];
   id<MTLFunction> relu_function = [library newFunctionWithName:@"relu_kernel"];
   id<MTLFunction> gru_function = [library newFunctionWithName:@"gru_step_kernel"];
+  id<MTLFunction> gru_sequence_function = [library newFunctionWithName:@"gru_sequence_kernel"];
   id<MTLFunction> conv2d_function = [library newFunctionWithName:@"conv2d_kernel"];
   id<MTLFunction> conv_transpose2d_function =
       [library newFunctionWithName:@"conv_transpose2d_kernel"];
@@ -478,6 +521,11 @@ MetalBackend::MetalBackend() : impl_(std::make_unique<Impl>()) {
       [impl_->device newComputePipelineStateWithFunction:gru_function error:&error];
   if (impl_->gru_pipeline == nil) {
     throw std::runtime_error("MetalBackend: failed to create gru pipeline");
+  }
+  impl_->gru_sequence_pipeline = [impl_->device
+      newComputePipelineStateWithFunction:gru_sequence_function error:&error];
+  if (impl_->gru_sequence_pipeline == nil) {
+    throw std::runtime_error("MetalBackend: failed to create gru sequence pipeline");
   }
   impl_->conv2d_pipeline =
       [impl_->device newComputePipelineStateWithFunction:conv2d_function error:&error];
@@ -840,6 +888,50 @@ Tensor MetalBackend::gru_step(
   [encoder endEncoding];
   [command_buffer commit];
   check_status(command_buffer, "metal::gru_step");
+  copy_output(output_buffer, output);
+  return output;
+}
+
+Tensor MetalBackend::gru_sequence(
+    const Tensor& sequence,
+    const Tensor& initial_hidden,
+    const Tensor& input_weights,
+    const Tensor& hidden_weights,
+    const Tensor& bias,
+    MemoryPool& pool) const {
+  if (sequence.rank() != 3 || sequence.shape()[1] != 1 || initial_hidden.rank() != 3 ||
+      input_weights.rank() != 3 || hidden_weights.rank() != 3 || bias.rank() != 2) {
+    throw std::invalid_argument("metal::gru_sequence has invalid shapes");
+  }
+  const std::size_t time_steps = sequence.shape()[0];
+  const std::size_t input_size = sequence.shape()[2];
+  const std::size_t hidden_size = initial_hidden.shape()[2];
+  Tensor output = pool.allocate_tensor({time_steps, 1, hidden_size});
+  id<MTLBuffer> sequence_buffer = make_input_buffer(impl_->device, sequence);
+  id<MTLBuffer> hidden_buffer = make_input_buffer(impl_->device, initial_hidden);
+  id<MTLBuffer> input_weights_buffer = make_cached_weight_buffer(impl_->device, input_weights, impl_->weight_buffers);
+  id<MTLBuffer> hidden_weights_buffer = make_cached_weight_buffer(impl_->device, hidden_weights, impl_->weight_buffers);
+  id<MTLBuffer> bias_buffer = make_cached_weight_buffer(impl_->device, bias, impl_->weight_buffers);
+  id<MTLBuffer> output_buffer = [impl_->device newBufferWithLength:output.nbytes() options:MTLResourceStorageModeShared];
+  const std::uint32_t values[] = {static_cast<std::uint32_t>(time_steps), static_cast<std::uint32_t>(input_size), static_cast<std::uint32_t>(hidden_size)};
+  id<MTLCommandBuffer> command_buffer = [impl_->queue commandBuffer];
+  id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
+  [encoder setComputePipelineState:impl_->gru_sequence_pipeline];
+  [encoder setBuffer:sequence_buffer offset:0 atIndex:0];
+  [encoder setBuffer:hidden_buffer offset:0 atIndex:1];
+  [encoder setBuffer:input_weights_buffer offset:0 atIndex:2];
+  [encoder setBuffer:hidden_weights_buffer offset:0 atIndex:3];
+  [encoder setBuffer:bias_buffer offset:0 atIndex:4];
+  [encoder setBuffer:output_buffer offset:0 atIndex:5];
+  [encoder setBytes:&values[0] length:sizeof(values[0]) atIndex:6];
+  [encoder setBytes:&values[1] length:sizeof(values[1]) atIndex:7];
+  [encoder setBytes:&values[2] length:sizeof(values[2]) atIndex:8];
+  const NSUInteger threads = std::min<NSUInteger>(hidden_size, impl_->gru_sequence_pipeline.maxTotalThreadsPerThreadgroup);
+  [encoder dispatchThreads:MTLSizeMake(hidden_size, 1, 1)
+      threadsPerThreadgroup:MTLSizeMake(threads, 1, 1)];
+  [encoder endEncoding];
+  [command_buffer commit];
+  check_status(command_buffer, "metal::gru_sequence");
   copy_output(output_buffer, output);
   return output;
 }
