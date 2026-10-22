@@ -32,6 +32,14 @@ int main() {
           std::cout << "\n";
         } catch (...) {
         }
+        for (const auto& attribute : node.attributes) {
+          std::cout << " attr_name " << attribute.name << " integer=" << attribute.integer << "\n";
+          if (!attribute.integers.empty()) {
+            std::cout << " attr " << attribute.name << "=";
+            for (auto value : attribute.integers) std::cout << value << ',';
+            std::cout << "\n";
+          }
+        }
       }
       bool mentions = node.name.find("df_fc_emb") != std::string::npos;
       for (const auto& output : node.outputs) mentions = mentions || output == "/Reshape_output_0";
@@ -44,6 +52,13 @@ int main() {
         for (const auto& attribute : node.attributes) {
           if (!attribute.string.empty()) std::cout << " attr " << attribute.name << "=" << attribute.string << "\n";
         }
+      }
+      if (node.name.find("combine") != std::string::npos || node.name.find("erb_fc") != std::string::npos) {
+        std::cout << "branch node " << node.name << " op=" << node.op_type << " inputs=";
+        for (const auto& input : node.inputs) std::cout << input << ',';
+        std::cout << " outputs=";
+        for (const auto& output : node.outputs) std::cout << output << ',';
+        std::cout << "\n";
       }
     }
     runtime::CPUBackend backend;

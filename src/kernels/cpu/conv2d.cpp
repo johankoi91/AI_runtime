@@ -9,11 +9,12 @@ Tensor conv2d(
     const Tensor& input,
     const Tensor& weights,
     const Tensor& bias,
-    std::size_t stride,
+    std::size_t stride_h,
+    std::size_t stride_w,
     std::size_t padding,
     std::size_t groups,
     MemoryPool* pool) {
-  if (stride == 0 || input.dtype() != DType::Float32 || weights.dtype() != DType::Float32 ||
+  if (stride_h == 0 || stride_w == 0 || input.dtype() != DType::Float32 || weights.dtype() != DType::Float32 ||
       bias.dtype() != DType::Float32 || !input.is_contiguous() || !weights.is_contiguous() ||
       !bias.is_contiguous() || input.rank() != 4 || weights.rank() != 4 || bias.rank() != 1) {
     std::ostringstream message;
@@ -32,13 +33,13 @@ Tensor conv2d(
   const std::size_t kernel_channels = weights.shape()[1];
   const std::size_t kernel_height = weights.shape()[2];
   const std::size_t kernel_width = weights.shape()[3];
-  if (groups == 0 || input_channels % groups != 0 || output_channels % groups != 0 ||
+  if (stride_h == 0 || stride_w == 0 || groups == 0 || input_channels % groups != 0 || output_channels % groups != 0 ||
       kernel_channels != input_channels / groups || bias.shape()[0] != output_channels ||
       input_height + 2 * padding < kernel_height || input_width + 2 * padding < kernel_width) {
     throw std::invalid_argument("conv2d weight shapes do not match input");
   }
-  const std::size_t output_height = (input_height + 2 * padding - kernel_height) / stride + 1;
-  const std::size_t output_width = (input_width + 2 * padding - kernel_width) / stride + 1;
+  const std::size_t output_height = (input_height + 2 * padding - kernel_height) / stride_h + 1;
+  const std::size_t output_width = (input_width + 2 * padding - kernel_width) / stride_w + 1;
   Tensor output = pool == nullptr
       ? Tensor::empty({batch, output_channels, output_height, output_width})
       : pool->allocate_tensor({batch, output_channels, output_height, output_width});
@@ -57,8 +58,8 @@ Tensor conv2d(
               const std::size_t input_channel = channel_start + local_channel;
             for (std::size_t kernel_y = 0; kernel_y < kernel_height; ++kernel_y) {
               for (std::size_t kernel_x = 0; kernel_x < kernel_width; ++kernel_x) {
-                const std::size_t input_y = output_y * stride + kernel_y;
-                const std::size_t input_x = output_x * stride + kernel_x;
+                const std::size_t input_y = output_y * stride_h + kernel_y;
+                const std::size_t input_x = output_x * stride_w + kernel_x;
                 if (input_y < padding || input_x < padding ||
                     input_y - padding >= input_height || input_x - padding >= input_width) {
                   continue;

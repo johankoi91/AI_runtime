@@ -156,9 +156,10 @@ kernel void conv2d_kernel(
     constant uint& kernel_width [[buffer(10)]],
     constant uint& output_height [[buffer(11)]],
     constant uint& output_width [[buffer(12)]],
-    constant uint& stride [[buffer(13)]],
-    constant uint& padding [[buffer(14)]],
-    constant uint& groups [[buffer(15)]],
+    constant uint& stride_h [[buffer(13)]],
+    constant uint& stride_w [[buffer(14)]],
+    constant uint& padding [[buffer(15)]],
+    constant uint& groups [[buffer(16)]],
     uint index [[thread_position_in_grid]]) {
   const uint total = batch * output_channels * output_height * output_width;
   if (index >= total) {
@@ -178,8 +179,8 @@ kernel void conv2d_kernel(
     const uint input_channel = group * channels_per_group + local_channel;
     for (uint kernel_y = 0; kernel_y < kernel_height; ++kernel_y) {
       for (uint kernel_x = 0; kernel_x < kernel_width; ++kernel_x) {
-        const uint input_y = output_y * stride + kernel_y;
-        const uint input_x = output_x * stride + kernel_x;
+        const uint input_y = output_y * stride_h + kernel_y;
+        const uint input_x = output_x * stride_w + kernel_x;
         if (input_y < padding || input_x < padding ||
             input_y - padding >= input_height || input_x - padding >= input_width) {
           continue;
@@ -811,11 +812,12 @@ Tensor MetalBackend::conv2d(
     const Tensor& input,
     const Tensor& weights,
     const Tensor& bias,
-    std::size_t stride,
+    std::size_t stride_h,
+    std::size_t stride_w,
     std::size_t padding,
     std::size_t groups,
     MemoryPool& pool) const {
-  if (stride == 0 || input.dtype() != DType::Float32 || weights.dtype() != DType::Float32 ||
+  if (stride_h == 0 || stride_w == 0 || input.dtype() != DType::Float32 || weights.dtype() != DType::Float32 ||
       bias.dtype() != DType::Float32 || !input.is_contiguous() || !weights.is_contiguous() ||
       !bias.is_contiguous() || input.rank() != 4 || weights.rank() != 4 || bias.rank() != 1) {
     throw std::invalid_argument("metal::conv2d requires contiguous float32 NCHW tensors");
@@ -833,8 +835,8 @@ Tensor MetalBackend::conv2d(
       input_height + 2 * padding < kernel_height || input_width + 2 * padding < kernel_width) {
     throw std::invalid_argument("metal::conv2d weight shapes do not match input");
   }
-  const std::size_t output_height = (input_height + 2 * padding - kernel_height) / stride + 1;
-  const std::size_t output_width = (input_width + 2 * padding - kernel_width) / stride + 1;
+  const std::size_t output_height = (input_height + 2 * padding - kernel_height) / stride_h + 1;
+  const std::size_t output_width = (input_width + 2 * padding - kernel_width) / stride_w + 1;
   Tensor output = pool.allocate_tensor(
       {batch, output_channels, output_height, output_width}, DType::Float32);
   id<MTLBuffer> input_buffer = make_input_buffer(impl_->device, input);
@@ -847,8 +849,9 @@ Tensor MetalBackend::conv2d(
       static_cast<std::uint32_t>(input_height), static_cast<std::uint32_t>(input_width),
       static_cast<std::uint32_t>(output_channels), static_cast<std::uint32_t>(kernel_height),
       static_cast<std::uint32_t>(kernel_width), static_cast<std::uint32_t>(output_height),
-      static_cast<std::uint32_t>(output_width), static_cast<std::uint32_t>(stride),
-      static_cast<std::uint32_t>(padding), static_cast<std::uint32_t>(groups)};
+      static_cast<std::uint32_t>(output_width), static_cast<std::uint32_t>(stride_h),
+      static_cast<std::uint32_t>(stride_w), static_cast<std::uint32_t>(padding),
+      static_cast<std::uint32_t>(groups)};
   id<MTLCommandBuffer> command_buffer = [impl_->queue commandBuffer];
   id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
   [encoder setComputePipelineState:impl_->conv2d_pipeline];
@@ -856,7 +859,7 @@ Tensor MetalBackend::conv2d(
   [encoder setBuffer:weights_buffer offset:0 atIndex:1];
   [encoder setBuffer:bias_buffer offset:0 atIndex:2];
   [encoder setBuffer:output_buffer offset:0 atIndex:3];
-  for (NSUInteger index = 0; index < 12; ++index) {
+  for (NSUInteger index = 0; index < 13; ++index) {
     [encoder setBytes:&values[index] length:sizeof(values[index]) atIndex:4 + index];
   }
   const NSUInteger count = output.numel();

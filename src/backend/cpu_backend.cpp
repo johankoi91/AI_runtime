@@ -51,11 +51,12 @@ Tensor CPUBackend::conv2d(
     const Tensor& input,
     const Tensor& weights,
     const Tensor& bias,
-    std::size_t stride,
+    std::size_t stride_h,
+    std::size_t stride_w,
     std::size_t padding,
     std::size_t groups,
     MemoryPool& pool) const {
-  return cpu::conv2d(input, weights, bias, stride, padding, groups, &pool);
+  return cpu::conv2d(input, weights, bias, stride_h, stride_w, padding, groups, &pool);
 }
 
 Tensor CPUBackend::conv_transpose2d(

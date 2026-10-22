@@ -262,6 +262,8 @@ OnnxNode parse_node(const std::vector<std::uint8_t>& bytes) {
           attribute.integer = static_cast<std::int64_t>(attribute_reader.varint());
         } else if (attribute_field == 8 && attribute_wire == 2) {
           attribute.integers = packed_int64(attribute_reader.length_delimited());
+        } else if (attribute_field == 8 && attribute_wire == 0) {
+          attribute.integers.push_back(static_cast<std::int64_t>(attribute_reader.varint()));
         } else if (attribute_field == 4 && attribute_wire == 2) {
           attribute.string = parse_string(attribute_reader.length_delimited());
         } else if (attribute_field == 5 && attribute_wire == 2) {

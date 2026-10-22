@@ -255,15 +255,25 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
       if (strides.size() != 2 || pads.size() != 4 || dilations.size() != 2 || groups.size() != 1 ||
           strides[0] <= 0 || strides[1] <= 0 || pads[0] < 0 || pads[1] < 0 ||
           pads[2] < 0 || pads[3] < 0 || dilations[0] != 1 || dilations[1] != 1 ||
-          pads[0] != pads[2] || pads[1] != pads[3] || strides[0] != strides[1]) {
+          false) {
         throw std::runtime_error("ONNX Conv attributes unsupported: strides=" + std::to_string(strides.size()) +
             " pads=" + std::to_string(pads.size()) + " dilation0=" + std::to_string(dilations[0]) +
             " dilation1=" + std::to_string(dilations[1]) + " group=" + std::to_string(groups[0]) +
+            " stride0=" + std::to_string(strides[0]) + " stride1=" + std::to_string(strides[1]) +
+            " groups_size=" + std::to_string(groups.size()) +
             " pad=" + std::to_string(pads[0]) + "," + std::to_string(pads[1]) + "," +
             std::to_string(pads[2]) + "," + std::to_string(pads[3]));
       }
+      if (pads[0] != pads[2] || pads[1] != pads[3]) {
+        const std::vector<std::int64_t> full_pads = {
+            0, 0, pads[0], pads[1], 0, 0, pads[2], pads[3]};
+        input = pad_tensor(input, full_pads, 0.0f, pool);
+      }
+      const std::size_t symmetric_padding = pads[0] == pads[2] && pads[1] == pads[3]
+          ? static_cast<std::size_t>(pads[0]) : 0;
       output = backend_.conv2d(input, weights, bias, static_cast<std::size_t>(strides[0]),
-                               static_cast<std::size_t>(pads[0]), static_cast<std::size_t>(groups[0]), pool);
+                               static_cast<std::size_t>(strides[1]),
+                               symmetric_padding, static_cast<std::size_t>(groups[0]), pool);
     } else if (node.op_type == "ConvTranspose") {
       if (node.inputs.size() < 2 || node.inputs.size() > 3) {
         throw std::runtime_error("ConvTranspose input count unsupported");
