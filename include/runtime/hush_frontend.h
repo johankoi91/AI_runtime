@@ -5,6 +5,7 @@
 #include "runtime/hush_model.h"
 #include "runtime/tensor.h"
 #include "runtime/audio.h"
+#include "runtime/backend.h"
 
 namespace runtime {
 
@@ -18,6 +19,10 @@ class HushFrontend {
   explicit HushFrontend(const HushConfig& config);
 
   HushFeatures process(const AudioFrame& frame);
+  HushFeatures process(
+      const AudioFrame& frame,
+      const Backend& backend,
+      MemoryPool& pool);
   void reset();
 
  private:

@@ -589,6 +589,13 @@ void test_hush_frontend(TestContext& ctx) {
     wrong_frame_rejected = true;
   }
   ctx.expect_true(wrong_frame_rejected, "Hush frontend should reject wrong frame length");
+
+  runtime::CPUBackend backend;
+  runtime::MemoryPool pool;
+  const runtime::HushFeatures backend_features = frontend.process(
+      runtime::AudioFrame::mono_16k(std::vector<float>(160, 0.1f)), backend, pool);
+  ctx.expect_true(backend_features.spectrum.shape() == runtime::Shape({1, 161, 2}),
+                  "Hush frontend should use backend STFT");
 }
 
 }  // namespace

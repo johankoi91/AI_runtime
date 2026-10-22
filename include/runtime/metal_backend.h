@@ -49,11 +49,11 @@ class MetalBackend final : public Backend {
       const Tensor& samples,
       std::size_t fft_size,
       std::size_t hop_size,
-      MemoryPool& pool) const;
+      MemoryPool& pool) const override;
   Tensor erb_filterbank(
       const Tensor& spectrum,
       const Tensor& filterbank,
-      MemoryPool& pool) const;
+      MemoryPool& pool) const override;
   Tensor exponential_unit_norm(
       const Tensor& input,
       float& running_energy,

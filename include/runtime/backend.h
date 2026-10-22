@@ -46,6 +46,15 @@ class Backend {
       std::size_t stride,
       std::size_t padding,
       MemoryPool& pool) const = 0;
+  virtual Tensor stft(
+      const Tensor& samples,
+      std::size_t fft_size,
+      std::size_t hop_size,
+      MemoryPool& pool) const = 0;
+  virtual Tensor erb_filterbank(
+      const Tensor& spectrum,
+      const Tensor& filterbank,
+      MemoryPool& pool) const = 0;
   virtual Tensor gru_step(
       const Tensor& input,
       const Tensor& hidden,

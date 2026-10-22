@@ -4,6 +4,7 @@
 #include <stdexcept>
 
 #include "runtime/kernels.h"
+#include "runtime/spectral.h"
 
 namespace runtime {
 
@@ -60,6 +61,34 @@ Tensor CPUBackend::conv_transpose2d(
     std::size_t padding,
     MemoryPool& pool) const {
   return cpu::conv_transpose2d(input, weights, bias, stride, padding, &pool);
+}
+
+Tensor CPUBackend::stft(
+    const Tensor& samples,
+    std::size_t fft_size,
+    std::size_t hop_size,
+    MemoryPool& pool) const {
+  if (samples.rank() != 1 || samples.dtype() != DType::Float32 || !samples.is_contiguous()) {
+    throw std::invalid_argument("cpu::stft requires a contiguous float32 vector");
+  }
+  std::vector<float> values(samples.data<float>(), samples.data<float>() + samples.numel());
+  const Spectrogram result = runtime::stft(values, fft_size, hop_size);
+  std::vector<float> output;
+  output.reserve(result.values.size() * 2);
+  for (const Complex32& value : result.values) {
+    output.push_back(value.real);
+    output.push_back(value.imag);
+  }
+  Tensor tensor = pool.allocate_tensor({result.values.size() / result.bins, result.bins, 2});
+  std::copy(output.begin(), output.end(), tensor.data<float>());
+  return tensor;
+}
+
+Tensor CPUBackend::erb_filterbank(
+    const Tensor& spectrum,
+    const Tensor& filterbank,
+    MemoryPool& pool) const {
+  return cpu::erb_filterbank(spectrum, filterbank, &pool);
 }
 
 Tensor CPUBackend::gru_step(

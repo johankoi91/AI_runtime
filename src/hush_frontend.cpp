@@ -61,6 +61,25 @@ HushFeatures HushFrontend::process(const AudioFrame& frame) {
   return {.spectrum = std::move(spectrum), .erb = std::move(erb)};
 }
 
+HushFeatures HushFrontend::process(
+    const AudioFrame& frame,
+    const Backend& backend,
+    MemoryPool& pool) {
+  if (frame.format().sample_rate != config_.sample_rate || frame.format().channels != 1 ||
+      frame.sample_count() != config_.hop_size) {
+    throw std::invalid_argument("audio frame does not match Hush frontend configuration");
+  }
+  std::vector<float> window;
+  window.reserve(config_.fft_size);
+  window.insert(window.end(), history_.begin(), history_.end());
+  window.insert(window.end(), frame.samples().begin(), frame.samples().end());
+  Tensor input = Tensor::from_vector({window.size()}, window);
+  Tensor spectrum = backend.stft(input, config_.fft_size, config_.hop_size, pool);
+  Tensor erb = backend.erb_filterbank(spectrum, filterbank_, pool);
+  history_ = frame.samples();
+  return {.spectrum = std::move(spectrum), .erb = std::move(erb)};
+}
+
 void HushFrontend::reset() {
   std::fill(history_.begin(), history_.end(), 0.0f);
 }
