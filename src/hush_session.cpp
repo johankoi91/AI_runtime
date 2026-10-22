@@ -123,8 +123,13 @@ std::unordered_map<std::string, Tensor> HushStreamSession::process_audio_frame(
     MemoryPool& pool) {
   validate_frame(frame);
   const HushFeatures features = frontend_.process(frame);
-  return process_encoder(
-      {{erb_input_name, features.erb}, {df_input_name, features.df}}, pool);
+  Tensor erb = features.erb;
+  Tensor df = features.df;
+  bool spatial_encoder = false;
+  for (const OnnxNode& node : model_.encoder.nodes) spatial_encoder = spatial_encoder || node.op_type == "Conv";
+  if (spatial_encoder && erb.rank() == 2) erb = cpu::reshape(erb, {1, 1, erb.shape()[0], erb.shape()[1]});
+  if (spatial_encoder && df.rank() == 3) df = cpu::reshape(df, {1, df.shape()[0], df.shape()[1], df.shape()[2]});
+  return process_encoder({{erb_input_name, erb}, {df_input_name, df}}, pool);
 }
 
 AudioFrame HushStreamSession::process_audio(
@@ -136,8 +141,14 @@ AudioFrame HushStreamSession::process_audio(
     MemoryPool& pool) {
   validate_frame(frame);
   const HushFeatures features = frontend_.process(frame);
+  Tensor erb = features.erb;
+  Tensor df = features.df;
+  bool spatial_encoder = false;
+  for (const OnnxNode& node : model_.encoder.nodes) spatial_encoder = spatial_encoder || node.op_type == "Conv";
+  if (spatial_encoder && erb.rank() == 2) erb = cpu::reshape(erb, {1, 1, erb.shape()[0], erb.shape()[1]});
+  if (spatial_encoder && df.rank() == 3) df = cpu::reshape(df, {1, df.shape()[0], df.shape()[1], df.shape()[2]});
   const auto encoder_outputs = process_encoder(
-      {{erb_input_name, features.erb}, {df_input_name, features.df}}, pool);
+      {{erb_input_name, erb}, {df_input_name, df}}, pool);
   const auto decoder_outputs = process_decoders(encoder_outputs, {}, {}, pool);
   const auto mask_iterator = decoder_outputs.erb.find(mask_output_name);
   if (mask_iterator == decoder_outputs.erb.end()) {

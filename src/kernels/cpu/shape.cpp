@@ -2,6 +2,7 @@
 
 #include <numeric>
 #include <stdexcept>
+#include <sstream>
 
 namespace runtime::cpu {
 
@@ -31,15 +32,19 @@ void decode_index(std::size_t linear, const Shape& shape, std::vector<std::size_
 
 Tensor reshape(const Tensor& input, const Shape& shape) {
   if (input.dtype() != DType::Float32 || !input.is_contiguous() || product(shape) != input.numel()) {
-    throw std::invalid_argument("reshape requires a contiguous tensor with matching element count");
+    throw std::invalid_argument("reshape requires contiguous tensor shape=" + input.debug_string() +
+                               " target_rank=" + std::to_string(shape.size()) +
+                               " target_numel=" + std::to_string(product(shape)));
   }
   return input.view(shape, strides_for(shape));
 }
 
 Tensor transpose(const Tensor& input, const std::vector<std::size_t>& permutation, MemoryPool* pool) {
-  if (input.dtype() != DType::Float32 || !input.is_contiguous() ||
-      permutation.size() != input.rank()) {
-    throw std::invalid_argument("transpose requires a contiguous float32 tensor and full permutation");
+  if (input.dtype() != DType::Float32 || permutation.size() != input.rank()) {
+    std::ostringstream message;
+    message << "transpose requires a float32 tensor and full permutation (rank=" << input.rank()
+            << ", permutation=" << permutation.size() << ")";
+    throw std::invalid_argument(message.str());
   }
   Shape output_shape(input.rank());
   std::vector<bool> used(input.rank(), false);
@@ -51,7 +56,7 @@ Tensor transpose(const Tensor& input, const std::vector<std::size_t>& permutatio
     output_shape[index] = input.shape()[permutation[index]];
   }
   Tensor output = pool == nullptr ? Tensor::empty(output_shape) : pool->allocate_tensor(output_shape);
-  const Strides input_strides = strides_for(input.shape());
+  const Strides& input_strides = input.strides();
   for (std::size_t linear = 0; linear < output.numel(); ++linear) {
     std::vector<std::size_t> output_index;
     decode_index(linear, output_shape, output_index);
@@ -67,14 +72,19 @@ Tensor transpose(const Tensor& input, const std::vector<std::size_t>& permutatio
 Tensor concat(const std::vector<const Tensor*>& inputs, std::size_t axis, MemoryPool* pool) {
   if (inputs.empty() || inputs.front() == nullptr) throw std::invalid_argument("concat needs inputs");
   const Tensor& first = *inputs.front();
-  if (first.dtype() != DType::Float32 || !first.is_contiguous() || axis >= first.rank()) {
+  if (first.dtype() != DType::Float32 || axis >= first.rank()) {
     throw std::invalid_argument("concat has invalid first input");
   }
   Shape output_shape = first.shape();
   output_shape[axis] = 0;
   for (const Tensor* input : inputs) {
-    if (input == nullptr || input->dtype() != DType::Float32 || !input->is_contiguous() ||
-        input->rank() != first.rank()) throw std::invalid_argument("concat input is invalid");
+    if (input == nullptr || input->dtype() != DType::Float32 ||
+        input->rank() != first.rank()) {
+      std::ostringstream message;
+      message << "concat input is invalid rank=" << (input == nullptr ? 0 : input->rank())
+              << " expected=" << first.rank();
+      throw std::invalid_argument(message.str());
+    }
     for (std::size_t dimension = 0; dimension < first.rank(); ++dimension) {
       if (dimension != axis && input->shape()[dimension] != first.shape()[dimension]) {
         throw std::invalid_argument("concat non-axis dimensions must match");
@@ -88,10 +98,19 @@ Tensor concat(const std::vector<const Tensor*>& inputs, std::size_t axis, Memory
   std::size_t output_offset = 0;
   for (std::size_t outer_index = 0; outer_index < outer; ++outer_index) {
     for (const Tensor* input : inputs) {
-      const std::size_t block = input->shape()[axis] * inner;
-      const float* source = input->data<float>() + outer_index * block;
-      std::copy(source, source + block, output.data<float>() + output_offset);
-      output_offset += block;
+      for (std::size_t axis_index = 0; axis_index < input->shape()[axis]; ++axis_index) {
+        for (std::size_t inner_index = 0; inner_index < inner; ++inner_index) {
+          std::size_t linear = outer_index * input->shape()[axis] * inner + axis_index * inner + inner_index;
+          std::size_t remaining = linear;
+          std::size_t source_offset = input->offset_elements();
+          for (std::size_t dimension = input->rank(); dimension-- > 0;) {
+            const std::size_t coordinate = remaining % input->shape()[dimension];
+            remaining /= input->shape()[dimension];
+            source_offset += coordinate * input->strides()[dimension];
+          }
+          output.data<float>()[output_offset++] = input->data<float>()[source_offset - input->offset_elements()];
+        }
+      }
     }
   }
   return output;

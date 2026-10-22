@@ -1,6 +1,7 @@
 #include "runtime/kernels.h"
 
 #include <stdexcept>
+#include <sstream>
 
 namespace runtime::cpu {
 
@@ -10,11 +11,18 @@ Tensor conv2d(
     const Tensor& bias,
     std::size_t stride,
     std::size_t padding,
+    std::size_t groups,
     MemoryPool* pool) {
   if (stride == 0 || input.dtype() != DType::Float32 || weights.dtype() != DType::Float32 ||
       bias.dtype() != DType::Float32 || !input.is_contiguous() || !weights.is_contiguous() ||
       !bias.is_contiguous() || input.rank() != 4 || weights.rank() != 4 || bias.rank() != 1) {
-    throw std::invalid_argument("conv2d requires contiguous float32 NCHW tensors");
+    std::ostringstream message;
+    message << "conv2d requires contiguous float32 NCHW tensors input_rank=" << input.rank()
+            << " weight_rank=" << weights.rank() << " bias_rank=" << bias.rank()
+            << " input_contiguous=" << input.is_contiguous()
+            << " weight_contiguous=" << weights.is_contiguous()
+            << " bias_contiguous=" << bias.is_contiguous();
+    throw std::invalid_argument(message.str());
   }
   const std::size_t batch = input.shape()[0];
   const std::size_t input_channels = input.shape()[1];
@@ -24,7 +32,8 @@ Tensor conv2d(
   const std::size_t kernel_channels = weights.shape()[1];
   const std::size_t kernel_height = weights.shape()[2];
   const std::size_t kernel_width = weights.shape()[3];
-  if (kernel_channels != input_channels || bias.shape()[0] != output_channels ||
+  if (groups == 0 || input_channels % groups != 0 || output_channels % groups != 0 ||
+      kernel_channels != input_channels / groups || bias.shape()[0] != output_channels ||
       input_height + 2 * padding < kernel_height || input_width + 2 * padding < kernel_width) {
     throw std::invalid_argument("conv2d weight shapes do not match input");
   }
@@ -42,7 +51,10 @@ Tensor conv2d(
       for (std::size_t output_y = 0; output_y < output_height; ++output_y) {
         for (std::size_t output_x = 0; output_x < output_width; ++output_x) {
           float value = bias_data[output_channel];
-          for (std::size_t input_channel = 0; input_channel < input_channels; ++input_channel) {
+            const std::size_t group = output_channel / (output_channels / groups);
+            const std::size_t channel_start = group * kernel_channels;
+            for (std::size_t local_channel = 0; local_channel < kernel_channels; ++local_channel) {
+              const std::size_t input_channel = channel_start + local_channel;
             for (std::size_t kernel_y = 0; kernel_y < kernel_height; ++kernel_y) {
               for (std::size_t kernel_x = 0; kernel_x < kernel_width; ++kernel_x) {
                 const std::size_t input_y = output_y * stride + kernel_y;
@@ -55,7 +67,7 @@ Tensor conv2d(
                     ((batch_index * input_channels + input_channel) * input_height +
                      input_y - padding) * input_width + input_x - padding;
                 const std::size_t weight_offset =
-                    ((output_channel * input_channels + input_channel) * kernel_height + kernel_y) *
+                    ((output_channel * kernel_channels + local_channel) * kernel_height + kernel_y) *
                     kernel_width + kernel_x;
                 value += input_data[input_offset] * weight_data[weight_offset];
               }

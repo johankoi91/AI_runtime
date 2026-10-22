@@ -3,6 +3,8 @@
 #include <numeric>
 #include <algorithm>
 #include <limits>
+#include <cstdlib>
+#include <iostream>
 #include <stdexcept>
 
 #include "runtime/kernels.h"
@@ -39,7 +41,8 @@ std::vector<std::int64_t> attribute_values(
   try {
     const auto& attribute = graph.attribute(node, name);
     if (!attribute.integers.empty()) return attribute.integers;
-    return {attribute.integer};
+    if (attribute.integer != 0) return {attribute.integer};
+    return fallback;
   } catch (const std::out_of_range&) {
     return fallback;
   }
@@ -61,14 +64,37 @@ Tensor copy_with_shape(const Tensor& input, const Shape& shape) {
   return cpu::reshape(input, shape);
 }
 
+Tensor contiguous_copy(const Tensor& input, MemoryPool& pool) {
+  if (input.is_contiguous()) return input;
+  Tensor output = pool.allocate_tensor(input.shape(), input.dtype());
+  std::vector<std::size_t> index(input.rank());
+  for (std::size_t linear = 0; linear < input.numel(); ++linear) {
+    std::size_t remaining = linear;
+    std::size_t source_offset = input.offset_elements();
+    for (std::size_t dimension = input.rank(); dimension-- > 0;) {
+      index[dimension] = remaining % input.shape()[dimension];
+      remaining /= input.shape()[dimension];
+      source_offset += index[dimension] * input.strides()[dimension];
+    }
+    output.data<float>()[linear] = input.data<float>()[source_offset - input.offset_elements()];
+  }
+  return output;
+}
+
 Tensor pad_tensor(const Tensor& input, const std::vector<std::int64_t>& pads, float value, MemoryPool& pool) {
-  if (pads.size() != input.rank() * 2 || !input.is_contiguous()) {
-    throw std::runtime_error("ONNX Pad requires one before and after pad per dimension");
+  if ((pads.size() < input.rank() * 2 || pads.size() % 2 != 0) || !input.is_contiguous()) {
+    throw std::runtime_error("ONNX Pad requires compatible rank and pads");
+  }
+  const std::size_t pad_rank = pads.size() / 2;
+  const std::size_t leading = pad_rank - input.rank();
+  for (std::size_t index = 0; index < leading; ++index) {
+    if (pads[index] != 0 || pads[index + pad_rank] != 0) throw std::runtime_error("Pad cannot remove leading dimensions");
   }
   Shape output_shape(input.shape());
   for (std::size_t index = 0; index < input.rank(); ++index) {
-    if (pads[index] < 0 || pads[index + input.rank()] < 0) throw std::runtime_error("negative Pad is unsupported");
-    output_shape[index] += static_cast<std::size_t>(pads[index] + pads[index + input.rank()]);
+    const std::size_t pad_index = leading + index;
+    if (pads[pad_index] < 0 || pads[pad_index + pad_rank] < 0) throw std::runtime_error("negative Pad is unsupported");
+    output_shape[index] += static_cast<std::size_t>(pads[pad_index] + pads[pad_index + pad_rank]);
   }
   Tensor output = pool.allocate_tensor(output_shape);
   output.fill(value);
@@ -79,7 +105,7 @@ Tensor pad_tensor(const Tensor& input, const std::vector<std::int64_t>& pads, fl
     for (std::size_t dimension = input.rank(); dimension-- > 0;) {
       index[dimension] = remaining % input.shape()[dimension];
       remaining /= input.shape()[dimension];
-      const std::size_t coordinate = index[dimension] + static_cast<std::size_t>(pads[dimension]);
+      const std::size_t coordinate = index[dimension] + static_cast<std::size_t>(pads[leading + dimension]);
       destination = coordinate + destination * output_shape[dimension];
     }
     output.data<float>()[destination] = input.data<float>()[linear];
@@ -97,19 +123,31 @@ Tensor slice_tensor(
   if (!input.is_contiguous() || starts.size() != ends.size() || starts.size() != axes.size() ||
       starts.size() != steps.size()) throw std::runtime_error("Slice arguments have mismatched lengths");
   Shape output_shape = input.shape();
-  std::vector<std::size_t> begin(input.rank(), 0);
-  std::vector<std::size_t> stride(input.rank(), 1);
+  std::vector<std::int64_t> begin(input.rank(), 0);
+  std::vector<std::int64_t> stride(input.rank(), 1);
   for (std::size_t index = 0; index < axes.size(); ++index) {
-    if (axes[index] < 0 || static_cast<std::size_t>(axes[index]) >= input.rank() || steps[index] <= 0) {
-      throw std::runtime_error("Slice supports non-negative axes and positive steps only");
+    const std::int64_t normalized_axis = axes[index] < 0 ? axes[index] + input.rank() : axes[index];
+    if (normalized_axis < 0 || static_cast<std::size_t>(normalized_axis) >= input.rank() || steps[index] == 0) {
+      throw std::runtime_error("Slice axis or step is invalid");
     }
-    const std::size_t axis = static_cast<std::size_t>(axes[index]);
+    const std::size_t axis = static_cast<std::size_t>(normalized_axis);
     const std::int64_t dimension = static_cast<std::int64_t>(input.shape()[axis]);
-    const std::int64_t start = std::max<std::int64_t>(0, std::min(starts[index], dimension));
-    const std::int64_t end = std::max<std::int64_t>(start, std::min(ends[index], dimension));
-    begin[axis] = static_cast<std::size_t>(start);
-    stride[axis] = static_cast<std::size_t>(steps[index]);
-    output_shape[axis] = end <= start ? 0 : static_cast<std::size_t>((end - start + steps[index] - 1) / steps[index]);
+    const std::int64_t step_value = steps[index];
+    auto normalize = [&](std::int64_t value, bool is_start) {
+      if (value < 0) value += dimension;
+      if (step_value > 0) return std::max<std::int64_t>(0, std::min(value, dimension));
+      if (is_start) return std::max<std::int64_t>(0, std::min(value, dimension - 1));
+      return std::max<std::int64_t>(-1, std::min(value, dimension - 1));
+    };
+    const std::int64_t start = normalize(starts[index], true);
+    const std::int64_t end = normalize(ends[index], false);
+    begin[axis] = start;
+    stride[axis] = step_value;
+    if (step_value > 0) {
+      output_shape[axis] = end <= start ? 0 : static_cast<std::size_t>((end - start + step_value - 1) / step_value);
+    } else {
+      output_shape[axis] = start <= end ? 0 : static_cast<std::size_t>((start - end - 1) / (-step_value) + 1);
+    }
   }
   if (std::find(output_shape.begin(), output_shape.end(), 0) != output_shape.end()) {
     throw std::runtime_error("empty Slice outputs are unsupported");
@@ -126,8 +164,12 @@ Tensor slice_tensor(
     for (std::size_t dimension = output.rank(); dimension-- > 0;) {
       output_index[dimension] = remaining % output_shape[dimension];
       remaining /= output_shape[dimension];
-      input_offset += (begin[dimension] + output_index[dimension] * stride[dimension]) *
-          input_strides[dimension];
+      const std::int64_t coordinate = begin[dimension] +
+          static_cast<std::int64_t>(output_index[dimension]) * stride[dimension];
+      if (coordinate < 0 || coordinate >= static_cast<std::int64_t>(input.shape()[dimension])) {
+        throw std::runtime_error("Slice coordinate is out of range");
+      }
+      input_offset += static_cast<std::size_t>(coordinate) * input_strides[dimension];
     }
     output.data<float>()[linear] = input.data<float>()[input_offset];
   }
@@ -199,29 +241,33 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
           : node.op_type == "Sigmoid" ? backend_.sigmoid(input, pool) : backend_.tanh(input, pool);
     } else if (node.op_type == "Conv") {
       if (node.inputs.size() < 2 || node.inputs.size() > 3) throw std::runtime_error("Conv input count unsupported");
-      const Tensor& input = lookup(tensors, node.inputs[0]);
-      const Tensor& weights = lookup(tensors, node.inputs[1]);
-      Tensor bias = node.inputs.size() == 3 ? lookup(tensors, node.inputs[2]) : Tensor::zeros({weights.shape()[0]});
+      Tensor input = contiguous_copy(lookup(tensors, node.inputs[0]), pool);
+      Tensor weights = contiguous_copy(lookup(tensors, node.inputs[1]), pool);
+      Tensor bias = node.inputs.size() == 3 ? contiguous_copy(lookup(tensors, node.inputs[2]), pool) : Tensor::zeros({weights.shape()[0]});
       const auto strides = attribute_values(graph, node, "strides", {1, 1});
       const auto pads = attribute_values(graph, node, "pads", {0, 0, 0, 0});
       const auto dilations = attribute_values(graph, node, "dilations", {1, 1});
       const auto groups = attribute_values(graph, node, "group", {1});
       if (strides.size() != 2 || pads.size() != 4 || dilations.size() != 2 || groups.size() != 1 ||
           strides[0] <= 0 || strides[1] <= 0 || pads[0] < 0 || pads[1] < 0 ||
-          pads[2] < 0 || pads[3] < 0 || dilations[0] != 1 || dilations[1] != 1 || groups[0] != 1 ||
+          pads[2] < 0 || pads[3] < 0 || dilations[0] != 1 || dilations[1] != 1 ||
           pads[0] != pads[2] || pads[1] != pads[3] || strides[0] != strides[1]) {
-        throw std::runtime_error("ONNX Conv attributes are outside the supported 2D symmetric subset");
+        throw std::runtime_error("ONNX Conv attributes unsupported: strides=" + std::to_string(strides.size()) +
+            " pads=" + std::to_string(pads.size()) + " dilation0=" + std::to_string(dilations[0]) +
+            " dilation1=" + std::to_string(dilations[1]) + " group=" + std::to_string(groups[0]) +
+            " pad=" + std::to_string(pads[0]) + "," + std::to_string(pads[1]) + "," +
+            std::to_string(pads[2]) + "," + std::to_string(pads[3]));
       }
       output = backend_.conv2d(input, weights, bias, static_cast<std::size_t>(strides[0]),
-                               static_cast<std::size_t>(pads[0]), pool);
+                               static_cast<std::size_t>(pads[0]), static_cast<std::size_t>(groups[0]), pool);
     } else if (node.op_type == "ConvTranspose") {
       if (node.inputs.size() < 2 || node.inputs.size() > 3) {
         throw std::runtime_error("ConvTranspose input count unsupported");
       }
-      const Tensor& input = lookup(tensors, node.inputs[0]);
-      const Tensor& weights = lookup(tensors, node.inputs[1]);
+      Tensor input = contiguous_copy(lookup(tensors, node.inputs[0]), pool);
+      Tensor weights = contiguous_copy(lookup(tensors, node.inputs[1]), pool);
       Tensor bias = node.inputs.size() == 3
-          ? lookup(tensors, node.inputs[2])
+          ? contiguous_copy(lookup(tensors, node.inputs[2]), pool)
           : Tensor::zeros({weights.shape()[1]});
       const auto strides = attribute_values(graph, node, "strides", {1, 1});
       const auto pads = attribute_values(graph, node, "pads", {0, 0, 0, 0});
@@ -268,12 +314,22 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
         }
         shape[inferred_index] = lookup(tensors, node.inputs[0]).numel() / known_elements;
       }
-      output = cpu::reshape(lookup(tensors, node.inputs[0]), shape);
+      try {
+        output = cpu::reshape(lookup(tensors, node.inputs[0]), shape);
+      } catch (const std::exception& error) {
+        std::string shape_text;
+        for (std::size_t value : shape) shape_text += std::to_string(value) + ",";
+        throw std::runtime_error("Reshape node " + node.name + " input=" + node.inputs[0] +
+                                 " shape=" + shape_text + ": " + error.what());
+      }
     } else if (node.op_type == "Transpose") {
       std::vector<std::size_t> permutation;
       try {
         const auto& attribute = graph.attribute(node, "perm");
         for (std::int64_t value : attribute.integers) permutation.push_back(static_cast<std::size_t>(value));
+        if (permutation.empty()) {
+          for (std::size_t index = lookup(tensors, node.inputs[0]).rank(); index-- > 0;) permutation.push_back(index);
+        }
       } catch (const std::out_of_range&) {
         for (std::size_t index = lookup(tensors, node.inputs[0]).rank(); index-- > 0;) permutation.push_back(index);
       }
@@ -281,8 +337,31 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
     } else if (node.op_type == "Concat") {
       const auto& attribute = graph.attribute(node, "axis");
       std::vector<const Tensor*> concat_inputs;
-      for (const std::string& input_name : node.inputs) concat_inputs.push_back(&lookup(tensors, input_name));
-      output = cpu::concat(concat_inputs, static_cast<std::size_t>(attribute.integer), &pool);
+      std::vector<Tensor> concat_adapters;
+      concat_adapters.reserve(node.inputs.size());
+      const Tensor& first_tensor = lookup(tensors, node.inputs[0]);
+      for (const std::string& input_name : node.inputs) {
+        const Tensor* tensor = &lookup(tensors, input_name);
+        if (tensor->rank() < first_tensor.rank() && first_tensor.rank() == 2) {
+          const std::size_t axis = static_cast<std::size_t>(attribute.integer);
+          const std::size_t length = tensor->numel();
+          const Tensor contiguous = contiguous_copy(*tensor, pool);
+          concat_adapters.push_back(cpu::reshape(contiguous, axis == 0
+              ? Shape{length, 1} : Shape{1, length}));
+          tensor = &concat_adapters.back();
+        }
+        if (tensor->rank() != first_tensor.rank()) {
+          throw std::runtime_error("Concat node " + node.name + " input " + input_name +
+                                   " rank=" + std::to_string(tensor->rank()) +
+                                   " expected=" + std::to_string(first_tensor.rank()));
+        }
+        concat_inputs.push_back(tensor);
+      }
+      try {
+        output = cpu::concat(concat_inputs, static_cast<std::size_t>(attribute.integer), &pool);
+      } catch (const std::exception& error) {
+        throw std::runtime_error("Concat node " + node.name + ": " + error.what());
+      }
     } else if (node.op_type == "Flatten") {
       if (node.inputs.size() != 1) throw std::runtime_error("Flatten requires one input");
       const Tensor& input = lookup(tensors, node.inputs[0]);
@@ -324,7 +403,9 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
     } else if (node.op_type == "Cast") {
       if (node.inputs.size() != 1) throw std::runtime_error("Cast requires one input");
       const auto& attribute = graph.attribute(node, "to");
-      if (attribute.integer != 1) throw std::runtime_error("only float32 Cast is supported");
+      if (attribute.integer != 1 && attribute.integer != 6 && attribute.integer != 7 && attribute.integer != 10) {
+        throw std::runtime_error("unsupported ONNX Cast target type");
+      }
       output = lookup(tensors, node.inputs[0]);
     } else if (node.op_type == "Unsqueeze") {
       const Tensor& input = lookup(tensors, node.inputs[0]);
@@ -356,15 +437,21 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
       const std::size_t axis = attribute_size(graph, node, "axis", 0);
       if (axis >= input.rank() || axis != 0) throw std::runtime_error("Gather currently supports axis 0 only");
       const std::size_t block = input.numel() / input.shape()[0];
-      Tensor gathered = pool.allocate_tensor({indices.size(), block});
+      const bool scalar_index = lookup(tensors, node.inputs[1]).rank() == 0;
+      Tensor gathered = pool.allocate_tensor(scalar_index ? Shape{block} : Shape{indices.size(), block});
       for (std::size_t index = 0; index < indices.size(); ++index) {
         if (indices[index] < 0 || static_cast<std::size_t>(indices[index]) >= input.shape()[0]) throw std::runtime_error("Gather index out of range");
         std::copy_n(input.data<float>() + static_cast<std::size_t>(indices[index]) * block,
-                    block, gathered.data<float>() + index * block);
+                    block, gathered.data<float>() + (scalar_index ? 0 : index * block));
       }
       Shape shape = input.shape();
-      shape[0] = indices.size();
-      output = copy_with_shape(gathered, shape);
+      if (scalar_index) {
+        shape.erase(shape.begin());
+        output = copy_with_shape(gathered, shape);
+      } else {
+        shape[0] = indices.size();
+        output = copy_with_shape(gathered, shape);
+      }
     } else if (node.op_type == "Pad") {
       if (node.inputs.size() < 2 || node.inputs.size() > 3) throw std::runtime_error("Pad input count unsupported");
       const auto pads = tensor_ints(lookup(tensors, node.inputs[1]));
@@ -399,6 +486,10 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
       throw std::runtime_error("unsupported ONNX op in stage 15: " + node.op_type);
     }
     tensors[node.outputs[0]] = std::move(output);
+    if (std::getenv("HUSH_DEBUG_SHAPES") != nullptr) {
+      std::cerr << "[shape] " << node.name << " " << node.op_type << " -> "
+                << tensors[node.outputs[0]].debug_string() << "\n";
+    }
   }
   return tensors;
 }
