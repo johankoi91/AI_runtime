@@ -29,8 +29,24 @@ int main() {
     runtime::CPUBackend backend;
     runtime::HushStreamSession session(model, backend, {});
     runtime::MemoryPool pool;
-    const runtime::AudioFrame frame = runtime::AudioFrame::mono_16k(std::vector<float>(160, 0.0f));
-    const auto outputs = session.process_audio_frame(frame, "feat_erb", "feat_spec", pool);
+    runtime::HushFrontend frontend(model.config);
+    std::vector<runtime::Tensor> erb_frames;
+    std::vector<runtime::Tensor> df_frames;
+    for (int index = 0; index < 32; ++index) {
+      const runtime::AudioFrame frame = runtime::AudioFrame::mono_16k(std::vector<float>(160, 0.0f));
+      const runtime::HushFeatures features = frontend.process(frame);
+      erb_frames.push_back(features.erb);
+      df_frames.push_back(features.df);
+    }
+    std::vector<float> erb_values(32 * 32);
+    std::vector<float> df_values(2 * 32 * 64);
+    for (std::size_t time = 0; time < 32; ++time) {
+      std::copy_n(erb_frames[time].data<float>(), 32, erb_values.data() + time * 32);
+      std::copy_n(df_frames[time].data<float>(), 2 * 64, df_values.data() + time * 2 * 64);
+    }
+    const auto outputs = session.process_encoder(
+        {{"feat_erb", runtime::Tensor::from_vector({1, 1, 32, 32}, erb_values)},
+         {"feat_spec", runtime::Tensor::from_vector({1, 2, 32, 64}, df_values)}}, pool);
     std::cout << "encoder_outputs=" << outputs.size() << " frame=" << session.frame_index() << "\n";
     for (const auto& output : outputs) {
       std::cout << output.first << "=" << output.second.debug_string() << "\n";
