@@ -289,6 +289,45 @@ kernel void relu_kernel(
     uint index [[thread_position_in_grid]]) {
   if (index < count) output[index] = max(input[index], 0.0f);
 }
+
+kernel void istft_kernel(
+    device const float* spectrum [[buffer(0)]],
+    device float* output [[buffer(1)]],
+    constant uint& frames [[buffer(2)]],
+    constant uint& fft_size [[buffer(3)]],
+    constant uint& hop_size [[buffer(4)]],
+    constant uint& bins [[buffer(5)]],
+    constant uint& original_samples [[buffer(6)]],
+    uint index [[thread_position_in_grid]]) {
+  if (index >= original_samples) return;
+  const float pi = 3.14159265358979323846f;
+  float value = 0.0f;
+  float energy = 0.0f;
+  for (uint frame = 0; frame < frames; ++frame) {
+    const int local = int(index) - int(frame * hop_size);
+    if (local < 0 || uint(local) >= fft_size) continue;
+    const float window = 0.5f * (1.0f - cos(2.0f * pi * local / fft_size));
+    float inverse = 0.0f;
+    for (uint bin = 0; bin < fft_size; ++bin) {
+      float real = 0.0f;
+      float imag = 0.0f;
+      if (bin < bins) {
+        real = spectrum[(frame * bins + bin) * 2];
+        imag = spectrum[(frame * bins + bin) * 2 + 1];
+      } else {
+        const uint mirror = fft_size - bin;
+        if (mirror == 0 || mirror >= bins - 1) continue;
+        real = spectrum[(frame * bins + mirror) * 2];
+        imag = -spectrum[(frame * bins + mirror) * 2 + 1];
+      }
+      const float angle = 2.0f * pi * bin * local / fft_size;
+      inverse += real * cos(angle) - imag * sin(angle);
+    }
+    value += inverse / fft_size * window;
+    energy += window * window;
+  }
+  output[index] = energy > 1e-8f ? value / energy : 0.0f;
+}
 )metal";
 
 void check_status(id<MTLCommandBuffer> command_buffer, const char* operation) {
@@ -327,6 +366,7 @@ struct MetalBackend::Impl {
   id<MTLComputePipelineState> conv_transpose2d_pipeline = nil;
   id<MTLComputePipelineState> erb_pipeline = nil;
   id<MTLComputePipelineState> norm_pipeline = nil;
+  id<MTLComputePipelineState> istft_pipeline = nil;
   TraceSink* trace = nullptr;
 };
 
@@ -363,6 +403,7 @@ MetalBackend::MetalBackend() : impl_(std::make_unique<Impl>()) {
       [library newFunctionWithName:@"conv_transpose2d_kernel"];
   id<MTLFunction> erb_function = [library newFunctionWithName:@"erb_filterbank_kernel"];
   id<MTLFunction> norm_function = [library newFunctionWithName:@"exponential_unit_norm_kernel"];
+  id<MTLFunction> istft_function = [library newFunctionWithName:@"istft_kernel"];
   impl_->add_pipeline = [impl_->device newComputePipelineStateWithFunction:add_function error:&error];
   if (impl_->add_pipeline == nil) {
     throw std::runtime_error("MetalBackend: failed to create add pipeline");
@@ -414,6 +455,11 @@ MetalBackend::MetalBackend() : impl_(std::make_unique<Impl>()) {
       [impl_->device newComputePipelineStateWithFunction:norm_function error:&error];
   if (impl_->erb_pipeline == nil || impl_->norm_pipeline == nil) {
     throw std::runtime_error("MetalBackend: failed to create ERB pipelines");
+  }
+  impl_->istft_pipeline =
+      [impl_->device newComputePipelineStateWithFunction:istft_function error:&error];
+  if (impl_->istft_pipeline == nil) {
+    throw std::runtime_error("MetalBackend: failed to create istft pipeline");
   }
 }
 
@@ -967,7 +1013,38 @@ Tensor MetalBackend::istft(
     std::size_t hop_size,
     std::size_t original_samples,
     MemoryPool& pool) const {
-  return cpu::istft(spectrum, fft_size, hop_size, original_samples, &pool);
+  if (spectrum.dtype() != DType::Float32 || !spectrum.is_contiguous() || spectrum.rank() != 3 ||
+      spectrum.shape()[2] != 2 || spectrum.shape()[1] != fft_size / 2 + 1 || hop_size == 0 ||
+      hop_size > fft_size) {
+    throw std::invalid_argument("metal::istft has invalid spectrum shape");
+  }
+  const std::size_t frames = spectrum.shape()[0];
+  const std::size_t bins = spectrum.shape()[1];
+  Tensor output = pool.allocate_tensor({original_samples}, DType::Float32);
+  id<MTLBuffer> spectrum_buffer = make_input_buffer(impl_->device, spectrum);
+  id<MTLBuffer> output_buffer =
+      [impl_->device newBufferWithLength:output.nbytes() options:MTLResourceStorageModeShared];
+  const std::uint32_t values[] = {
+      static_cast<std::uint32_t>(frames), static_cast<std::uint32_t>(fft_size),
+      static_cast<std::uint32_t>(hop_size), static_cast<std::uint32_t>(bins),
+      static_cast<std::uint32_t>(original_samples)};
+  id<MTLCommandBuffer> command_buffer = [impl_->queue commandBuffer];
+  id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
+  [encoder setComputePipelineState:impl_->istft_pipeline];
+  [encoder setBuffer:spectrum_buffer offset:0 atIndex:0];
+  [encoder setBuffer:output_buffer offset:0 atIndex:1];
+  for (NSUInteger index = 0; index < 5; ++index) {
+    [encoder setBytes:&values[index] length:sizeof(values[index]) atIndex:2 + index];
+  }
+  const NSUInteger threads = std::min<NSUInteger>(
+      impl_->istft_pipeline.maxTotalThreadsPerThreadgroup, 256);
+  [encoder dispatchThreads:MTLSizeMake(original_samples, 1, 1)
+      threadsPerThreadgroup:MTLSizeMake(threads, 1, 1)];
+  [encoder endEncoding];
+  [command_buffer commit];
+  check_status(command_buffer, "metal::istft");
+  copy_output(output_buffer, output);
+  return output;
 }
 
 }  // namespace runtime

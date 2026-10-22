@@ -190,5 +190,26 @@ int main() {
     return 1;
   }
   std::cout << "Metal unit norm test passed (max error=" << max_error << ")\n";
+  std::vector<float> istft_samples(640);
+  for (std::size_t index = 0; index < istft_samples.size(); ++index) {
+    istft_samples[index] = 0.2f * std::sin(static_cast<float>(index) * 0.13f);
+  }
+  const runtime::Spectrogram istft_reference = runtime::stft(istft_samples, 320, 160);
+  std::vector<float> packed_istft;
+  for (const runtime::Complex32& value : istft_reference.values) {
+    packed_istft.push_back(value.real);
+    packed_istft.push_back(value.imag);
+  }
+  runtime::Tensor istft_spectrum = runtime::Tensor::from_vector({3, 161, 2}, packed_istft);
+  runtime::Tensor gpu_istft = backend.istft(istft_spectrum, 320, 160, 640, pool);
+  max_error = 0.0f;
+  for (std::size_t index = 20; index + 20 < istft_samples.size(); ++index) {
+    max_error = std::max(max_error, std::fabs(gpu_istft.data<float>()[index] - istft_samples[index]));
+  }
+  if (max_error > 2e-4f) {
+    std::cerr << "Metal ISTFT mismatch: max error=" << max_error << "\n";
+    return 1;
+  }
+  std::cout << "Metal ISTFT test passed (max error=" << max_error << ")\n";
   return 0;
 }
