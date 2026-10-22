@@ -213,8 +213,11 @@ kernel void conv_transpose2d_kernel(
     constant uint& kernel_width [[buffer(10)]],
     constant uint& output_height [[buffer(11)]],
     constant uint& output_width [[buffer(12)]],
-    constant uint& stride [[buffer(13)]],
-    constant uint& padding [[buffer(14)]],
+    constant uint& stride_h [[buffer(13)]],
+    constant uint& stride_w [[buffer(14)]],
+    constant uint& padding_h [[buffer(15)]],
+    constant uint& padding_w [[buffer(16)]],
+    constant uint& groups [[buffer(17)]],
     uint index [[thread_position_in_grid]]) {
   const uint total = batch * output_channels * output_height * output_width;
   if (index >= total) {
@@ -228,16 +231,19 @@ kernel void conv_transpose2d_kernel(
   const uint output_channel = remainder % output_channels;
   const uint batch_index = remainder / output_channels;
   float value = bias[output_channel];
-  for (uint input_channel = 0; input_channel < input_channels; ++input_channel) {
+  const uint channels_per_group = input_channels / groups;
+  const uint group = output_channel / (output_channels / groups);
+  for (uint local_channel = 0; local_channel < channels_per_group; ++local_channel) {
+    const uint input_channel = group * channels_per_group + local_channel;
     for (uint kernel_y = 0; kernel_y < kernel_height; ++kernel_y) {
       for (uint kernel_x = 0; kernel_x < kernel_width; ++kernel_x) {
-        const int raw_y = int(output_y) + int(padding) - int(kernel_y);
-        const int raw_x = int(output_x) + int(padding) - int(kernel_x);
-        if (raw_y < 0 || raw_x < 0 || raw_y % int(stride) != 0 || raw_x % int(stride) != 0) {
+        const int raw_y = int(output_y) + int(padding_h) - int(kernel_y);
+        const int raw_x = int(output_x) + int(padding_w) - int(kernel_x);
+        if (raw_y < 0 || raw_x < 0 || raw_y % int(stride_h) != 0 || raw_x % int(stride_w) != 0) {
           continue;
         }
-        const uint input_y = uint(raw_y) / stride;
-        const uint input_x = uint(raw_x) / stride;
+        const uint input_y = uint(raw_y) / stride_h;
+        const uint input_x = uint(raw_x) / stride_w;
         if (input_y >= input_height || input_x >= input_width) {
           continue;
         }
@@ -245,7 +251,7 @@ kernel void conv_transpose2d_kernel(
             ((batch_index * input_channels + input_channel) * input_height + input_y) *
             input_width + input_x;
         const uint weight_offset =
-            ((input_channel * output_channels + output_channel) * kernel_height + kernel_y) *
+            ((input_channel * (output_channels / groups) + (output_channel % (output_channels / groups))) * kernel_height + kernel_y) *
             kernel_width + kernel_x;
         value += input[input_offset] * weights[weight_offset];
       }
@@ -919,7 +925,8 @@ Tensor MetalBackend::conv_transpose2d(
       static_cast<std::uint32_t>(output_channels), static_cast<std::uint32_t>(kernel_height),
       static_cast<std::uint32_t>(kernel_width), static_cast<std::uint32_t>(output_height),
       static_cast<std::uint32_t>(output_width), static_cast<std::uint32_t>(stride_h),
-      static_cast<std::uint32_t>(padding_h)};
+      static_cast<std::uint32_t>(stride_w), static_cast<std::uint32_t>(padding_h),
+      static_cast<std::uint32_t>(padding_w), static_cast<std::uint32_t>(groups)};
   id<MTLCommandBuffer> command_buffer = [impl_->queue commandBuffer];
   id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
   [encoder setComputePipelineState:impl_->conv_transpose2d_pipeline];
@@ -927,7 +934,7 @@ Tensor MetalBackend::conv_transpose2d(
   [encoder setBuffer:weights_buffer offset:0 atIndex:1];
   [encoder setBuffer:bias_buffer offset:0 atIndex:2];
   [encoder setBuffer:output_buffer offset:0 atIndex:3];
-  for (NSUInteger index = 0; index < 11; ++index) {
+  for (NSUInteger index = 0; index < 14; ++index) {
     [encoder setBytes:&values[index] length:sizeof(values[index]) atIndex:4 + index];
   }
   const NSUInteger count = output.numel();

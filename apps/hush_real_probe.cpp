@@ -169,8 +169,17 @@ int main() {
     std::cout << "enhanced_samples=" << enhanced.sample_count()
               << " first=" << enhanced.samples().front();
     double checksum = 0.0;
-    for (float value : enhanced.samples()) checksum += value;
-    std::cout << " checksum=" << checksum << "\n";
+    double sum_abs = 0.0;
+    double sum_sq = 0.0;
+    float max_abs = 0.0f;
+    for (float value : enhanced.samples()) {
+      checksum += value;
+      sum_abs += std::fabs(value);
+      sum_sq += static_cast<double>(value) * value;
+      max_abs = std::max(max_abs, std::fabs(value));
+    }
+    std::cout << " checksum=" << checksum << " sum_abs=" << sum_abs
+              << " sum_sq=" << sum_sq << " max_abs=" << max_abs << "\n";
     return 0;
   } catch (const std::exception& error) {
     std::cerr << "real Hush probe failed: " << error.what() << "\n";
