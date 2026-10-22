@@ -422,6 +422,31 @@ void test_hush_model(TestContext& ctx) {
   ctx.expect_true(report.unsupported_ops.empty(), "minimal Hush graph should use supported ops");
 }
 
+void test_onnx_conv_attributes(TestContext& ctx) {
+  runtime::OnnxGraph graph;
+  runtime::OnnxNode node;
+  node.name = "conv";
+  node.op_type = "Conv";
+  node.inputs = {"x", "w", "b"};
+  node.outputs = {"y"};
+  node.attributes.push_back({"strides", 0, {1, 1}, {}});
+  node.attributes.push_back({"pads", 0, {1, 1, 1, 1}, {}});
+  node.attributes.push_back({"dilations", 0, {1, 1}, {}});
+  node.attributes.push_back({"group", 1, {}, {}});
+  graph.nodes.push_back(node);
+  graph.initializers = {
+      {.name = "w", .shape = {1, 1, 2, 2}, .values = {1.0f, 0.0f, 0.0f, 1.0f}},
+      {.name = "b", .shape = {1}, .values = {0.0f}},
+  };
+  runtime::CPUBackend backend;
+  runtime::OnnxExecutor executor(backend);
+  runtime::MemoryPool pool;
+  const auto outputs = executor.run(
+      graph, {{"x", runtime::Tensor::from_vector({1, 1, 2, 2}, {1, 2, 3, 4})}}, pool);
+  ctx.expect_true(outputs.at("y").shape() == runtime::Shape({1, 1, 3, 3}),
+                  "ONNX Conv attributes should map to padded 2D Conv");
+}
+
 void test_shape_kernels(TestContext& ctx) {
   const runtime::Tensor input = runtime::Tensor::from_vector(
       {2, 3}, {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f});
@@ -540,6 +565,7 @@ int main() {
       {"hush_model", test_hush_model},
       {"shape_kernels", test_shape_kernels},
       {"hush_stream_session", test_hush_stream_session},
+      {"onnx_conv_attributes", test_onnx_conv_attributes},
   };
 
   int passed_tests = 0;
