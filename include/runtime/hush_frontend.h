@@ -12,6 +12,7 @@ namespace runtime {
 struct HushFeatures {
   Tensor spectrum;
   Tensor erb;
+  Tensor df;
 };
 
 class HushFrontend {

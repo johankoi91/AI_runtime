@@ -57,8 +57,19 @@ HushFeatures HushFrontend::process(const AudioFrame& frame) {
   Tensor spectrum = Tensor::from_vector(
       {spectrogram.values.size() / spectrogram.bins, spectrogram.bins, 2}, spectrum_values);
   Tensor erb = cpu::erb_filterbank(spectrum, filterbank_);
+  const std::size_t df_bins = std::min(config_.df_bins, spectrogram.bins);
+  std::vector<float> df_values(2 * df_bins);
+  for (std::size_t bin = 0; bin < df_bins; ++bin) {
+    df_values[bin] = spectrogram.at(0, bin).real;
+    df_values[df_bins + bin] = spectrogram.at(0, bin).imag;
+  }
+  float energy = 0.0f;
+  for (float value : df_values) energy += value * value;
+  const float scale = 1.0f / std::sqrt(std::max(energy / df_values.size(), 1e-12f));
+  for (float& value : df_values) value *= scale;
+  Tensor df = Tensor::from_vector({2, 1, df_bins}, df_values);
   history_ = frame.samples();
-  return {.spectrum = std::move(spectrum), .erb = std::move(erb)};
+  return {.spectrum = std::move(spectrum), .erb = std::move(erb), .df = std::move(df)};
 }
 
 HushFeatures HushFrontend::process(
@@ -76,8 +87,20 @@ HushFeatures HushFrontend::process(
   Tensor input = Tensor::from_vector({window.size()}, window);
   Tensor spectrum = backend.stft(input, config_.fft_size, config_.hop_size, pool);
   Tensor erb = backend.erb_filterbank(spectrum, filterbank_, pool);
+  const std::size_t df_bins = std::min(config_.df_bins, spectrum.shape()[1]);
+  Tensor df = pool.allocate_tensor({2, 1, df_bins});
+  const float* spectrum_data = spectrum.data<float>();
+  float energy = 0.0f;
+  for (std::size_t bin = 0; bin < df_bins; ++bin) {
+    df.data<float>()[bin] = spectrum_data[bin * 2];
+    df.data<float>()[df_bins + bin] = spectrum_data[bin * 2 + 1];
+    energy += df.data<float>()[bin] * df.data<float>()[bin];
+    energy += df.data<float>()[df_bins + bin] * df.data<float>()[df_bins + bin];
+  }
+  const float scale = 1.0f / std::sqrt(std::max(energy / df.numel(), 1e-12f));
+  for (std::size_t index = 0; index < df.numel(); ++index) df.data<float>()[index] *= scale;
   history_ = frame.samples();
-  return {.spectrum = std::move(spectrum), .erb = std::move(erb)};
+  return {.spectrum = std::move(spectrum), .erb = std::move(erb), .df = std::move(df)};
 }
 
 void HushFrontend::reset() {

@@ -579,6 +579,10 @@ void test_hush_frontend(TestContext& ctx) {
                   "Hush frontend should produce one complex spectrum frame");
   ctx.expect_true(features.erb.shape() == runtime::Shape({1, 32}),
                   "Hush frontend should produce 32 ERB features");
+  ctx.expect_true(features.df.shape() == runtime::Shape({2, 1, 64}),
+                  "Hush frontend should produce two-channel DF features");
+  ctx.expect_true(std::isfinite(features.df.data<float>()[0]),
+                  "Hush frontend DF features should be finite");
   ctx.expect_true(std::isfinite(features.spectrum.data<float>()[0]),
                   "Hush frontend spectrum should contain finite values");
   frontend.reset();
