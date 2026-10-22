@@ -27,6 +27,7 @@
 #include "runtime/hush_frontend.h"
 #include "runtime/hush_model.h"
 #include "runtime/onnx_executor.h"
+#include "runtime/onnx_plan.h"
 
 #include <zlib.h>
 #include "runtime/memory_pool.h"
@@ -523,6 +524,19 @@ void test_onnx_shape_constant(TestContext& ctx) {
                    "Constant should return tensor attribute values");
 }
 
+void test_onnx_execution_plan(TestContext& ctx) {
+  runtime::OnnxGraph graph;
+  graph.nodes = {
+      {.name = "second", .op_type = "Relu", .inputs = {"a"}, .outputs = {"b"}},
+      {.name = "first", .op_type = "Relu", .inputs = {"x"}, .outputs = {"a"}},
+  };
+  const runtime::OnnxExecutionPlan plan = runtime::OnnxExecutionPlan::compile(graph);
+  ctx.expect_true(plan.nodes().size() == 2, "execution plan should contain all nodes");
+  ctx.expect_true(plan.nodes()[0].graph_index == 1 && plan.nodes()[1].graph_index == 0,
+                  "execution plan should topologically order nodes");
+  ctx.expect_true(plan.output_users("a") == 1, "execution plan should count value users");
+}
+
 void test_onnx_connection_ops(TestContext& ctx) {
   runtime::OnnxGraph graph;
   graph.initializers = {
@@ -856,6 +870,7 @@ int main() {
       {"onnx_conv_attributes", test_onnx_conv_attributes},
       {"onnx_conv_transpose", test_onnx_conv_transpose},
       {"onnx_shape_constant", test_onnx_shape_constant},
+      {"onnx_execution_plan", test_onnx_execution_plan},
       {"onnx_connection_ops", test_onnx_connection_ops},
       {"onnx_slice", test_onnx_slice},
       {"onnx_einsum", test_onnx_einsum},
