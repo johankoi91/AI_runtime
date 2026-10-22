@@ -300,6 +300,18 @@ HUSH_MODEL_BUNDLE=/tmp/hush-real-model.tar.gz HUSH_BACKEND=metal ./build/bin/hus
 
 当前真实 bundle 验收结果：encoder 191 个输出、ERB decoder 252 个输出、DF decoder 289 个输出，Metal ISTFT 输出 160 samples。Metal 连续运行 3 次结果一致，5 次真实 bundle 运行总耗时为 `1.84s`；CPU/Metal 输出最大绝对值分别为 `1.43e-15` 和 `5.51e-7`。
 
+### 后续验收和性能
+
+```bash
+HUSH_MODEL_BUNDLE=/tmp/hush-real-model.tar.gz HUSH_BACKEND=metal ./build/bin/hush_benchmark
+HUSH_MODEL_BUNDLE=/tmp/hush-real-model.tar.gz HUSH_BACKEND=metal ./build/bin/hush_stability
+HUSH_MODEL_BUNDLE=/tmp/hush-real-model.tar.gz HUSH_BACKEND=metal ./build/bin/hush_wav_demo input.wav output.wav
+./build/bin/hush_quality input.wav output.wav
+HUSH_MODEL_BUNDLE=/tmp/hush-real-model.tar.gz HUSH_BACKEND=metal ./build/bin/hush_mic_demo
+```
+
+当前稳定 Metal 路径约为 `52 ms / 320 ms` 音频上下文，p95 约 `59 ms`，折算约 `1.6 ms / 10 ms`，实时倍率约 `6x`。稳定路径通过 100 帧长测；实验性 `HUSH_FUSED_GRU=1` 路径尚未通过有限值验证，默认关闭。
+
 ## 当前能力边界
 
 当前版本故意保持最小化，所以也有一些明确限制：
