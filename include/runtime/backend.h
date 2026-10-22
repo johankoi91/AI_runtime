@@ -56,6 +56,12 @@ class Backend {
       const Tensor& spectrum,
       const Tensor& filterbank,
       MemoryPool& pool) const = 0;
+  virtual Tensor istft(
+      const Tensor& spectrum,
+      std::size_t fft_size,
+      std::size_t hop_size,
+      std::size_t original_samples,
+      MemoryPool& pool) const = 0;
   virtual Tensor gru_step(
       const Tensor& input,
       const Tensor& hidden,

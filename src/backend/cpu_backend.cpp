@@ -95,6 +95,15 @@ Tensor CPUBackend::erb_filterbank(
   return cpu::erb_filterbank(spectrum, filterbank, &pool);
 }
 
+Tensor CPUBackend::istft(
+    const Tensor& spectrum,
+    std::size_t fft_size,
+    std::size_t hop_size,
+    std::size_t original_samples,
+    MemoryPool& pool) const {
+  return cpu::istft(spectrum, fft_size, hop_size, original_samples, &pool);
+}
+
 Tensor CPUBackend::gru_step(
     const Tensor& input,
     const Tensor& hidden,

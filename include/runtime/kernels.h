@@ -55,6 +55,12 @@ Tensor apply_erb_mask(
     const Tensor& erb_mask,
     const Tensor& erb_projection,
     MemoryPool* pool = nullptr);
+Tensor istft(
+    const Tensor& spectrum,
+    std::size_t fft_size,
+    std::size_t hop_size,
+    std::size_t original_samples,
+    MemoryPool* pool = nullptr);
 Tensor reshape(const Tensor& input, const Shape& shape);
 Tensor transpose(const Tensor& input, const std::vector<std::size_t>& permutation, MemoryPool* pool = nullptr);
 Tensor concat(const std::vector<const Tensor*>& inputs, std::size_t axis, MemoryPool* pool = nullptr);

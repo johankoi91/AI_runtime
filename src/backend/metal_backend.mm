@@ -1,4 +1,5 @@
 #include "runtime/metal_backend.h"
+#include "runtime/kernels.h"
 
 #import <Metal/Metal.h>
 
@@ -958,6 +959,15 @@ Tensor MetalBackend::exponential_unit_norm(
   check_status(command_buffer, "metal::exponential_unit_norm");
   copy_output(output_buffer, output);
   return output;
+}
+
+Tensor MetalBackend::istft(
+    const Tensor& spectrum,
+    std::size_t fft_size,
+    std::size_t hop_size,
+    std::size_t original_samples,
+    MemoryPool& pool) const {
+  return cpu::istft(spectrum, fft_size, hop_size, original_samples, &pool);
 }
 
 }  // namespace runtime

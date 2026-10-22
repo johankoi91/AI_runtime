@@ -697,6 +697,25 @@ void test_erb_mask(TestContext& ctx) {
   ctx.expect_close(output.data<float>()[3], 2.0f, 1e-6f, "ERB mask imag bin 1");
 }
 
+void test_backend_istft(TestContext& ctx) {
+  std::vector<float> samples(640);
+  for (std::size_t index = 0; index < samples.size(); ++index) {
+    samples[index] = 0.3f * std::sin(static_cast<float>(index) * 0.11f);
+  }
+  const runtime::Spectrogram reference = runtime::stft(samples, 320, 160);
+  std::vector<float> packed;
+  for (const runtime::Complex32& value : reference.values) {
+    packed.push_back(value.real);
+    packed.push_back(value.imag);
+  }
+  runtime::CPUBackend backend;
+  runtime::MemoryPool pool;
+  const runtime::Tensor spectrum = runtime::Tensor::from_vector({3, 161, 2}, packed);
+  const runtime::Tensor output = backend.istft(spectrum, 320, 160, samples.size(), pool);
+  ctx.expect_true(output.shape() == runtime::Shape({samples.size()}), "backend ISTFT should restore length");
+  ctx.expect_close(output.data<float>()[100], samples[100], 2e-4f, "backend ISTFT sample");
+}
+
 }  // namespace
 
 int main() {
@@ -729,6 +748,7 @@ int main() {
       {"onnx_conv_transpose", test_onnx_conv_transpose},
       {"hush_frontend", test_hush_frontend},
       {"erb_mask", test_erb_mask},
+      {"backend_istft", test_backend_istft},
   };
 
   int passed_tests = 0;

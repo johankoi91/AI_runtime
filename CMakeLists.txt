@@ -28,6 +28,7 @@ add_library(mini_runtime
   src/kernels/cpu/add.cpp
   src/kernels/cpu/mul.cpp
   src/kernels/cpu/spectrum.cpp
+  src/kernels/cpu/istft.cpp
   src/kernels/cpu/activations.cpp
   src/kernels/cpu/gru.cpp
   src/kernels/cpu/conv2d.cpp
