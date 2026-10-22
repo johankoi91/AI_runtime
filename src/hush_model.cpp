@@ -3,6 +3,7 @@
 #include <stdexcept>
 #include <cctype>
 #include <sstream>
+#include <algorithm>
 
 namespace runtime {
 
@@ -44,6 +45,23 @@ OnnxGraph read_graph_entry(const HushModelBundle& bundle, const std::string& nam
 }
 
 }  // namespace
+
+HushGraphReport inspect_hush_graph(const OnnxGraph& graph) {
+  static const std::vector<std::string> supported = {
+      "Add", "MatMul", "Relu", "Sigmoid", "Tanh", "Conv", "GRU",
+      "Reshape", "Transpose", "Concat", "Flatten"};
+  HushGraphReport report;
+  report.node_count = graph.nodes.size();
+  for (const OnnxNode& node : graph.nodes) {
+    report.op_types.push_back(node.op_type);
+    if (std::find(supported.begin(), supported.end(), node.op_type) == supported.end() &&
+        std::find(report.unsupported_ops.begin(), report.unsupported_ops.end(), node.op_type) ==
+            report.unsupported_ops.end()) {
+      report.unsupported_ops.push_back(node.op_type);
+    }
+  }
+  return report;
+}
 
 HushConfig HushConfig::from_ini(const std::string& ini) {
   HushConfig config;

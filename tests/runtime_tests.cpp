@@ -417,6 +417,9 @@ void test_hush_model(TestContext& ctx) {
   ctx.expect_true(model.encoder.nodes[0].op_type == "Conv", "Hush model should load encoder graph");
   ctx.expect_true(model.erb_decoder.nodes[0].op_type == "Relu", "Hush model should load ERB decoder graph");
   ctx.expect_true(model.df_decoder.nodes[0].op_type == "GRU", "Hush model should load DF decoder graph");
+  const runtime::HushGraphReport report = runtime::inspect_hush_graph(model.encoder);
+  ctx.expect_true(report.node_count == 1, "Hush graph report should count nodes");
+  ctx.expect_true(report.unsupported_ops.empty(), "minimal Hush graph should use supported ops");
 }
 
 void test_shape_kernels(TestContext& ctx) {

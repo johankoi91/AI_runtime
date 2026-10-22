@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 #include "runtime/hush_bundle.h"
 #include "runtime/onnx_weights.h"
@@ -28,5 +29,13 @@ struct HushModel {
 
   static HushModel load(const std::string& path);
 };
+
+struct HushGraphReport {
+  std::size_t node_count = 0;
+  std::vector<std::string> op_types;
+  std::vector<std::string> unsupported_ops;
+};
+
+HushGraphReport inspect_hush_graph(const OnnxGraph& graph);
 
 }  // namespace runtime
