@@ -5,6 +5,7 @@
 #include <limits>
 #include <cstdlib>
 #include <iostream>
+#include <chrono>
 #include <stdexcept>
 
 #include "runtime/kernels.h"
@@ -328,6 +329,7 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
     tensors[initializer.name] = Tensor::from_vector(initializer.shape, initializer.values);
   }
   for (const OnnxNode& node : graph.nodes) {
+    const auto node_start = std::chrono::steady_clock::now();
     if (node.outputs.empty() || node.outputs.size() > 2) throw std::runtime_error("ONNX node output count unsupported: " + node.name);
     Tensor output;
     if (node.op_type == "Add" || node.op_type == "Mul" || node.op_type == "MatMul") {
@@ -677,6 +679,11 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
     if (std::getenv("HUSH_DEBUG_SHAPES") != nullptr) {
       std::cerr << "[shape] " << node.name << " " << node.op_type << " -> "
                 << tensors[node.outputs[0]].debug_string() << "\n";
+    }
+    if (std::getenv("HUSH_PROFILE_NODES") != nullptr) {
+      std::cerr << "[profile] " << node.name << " " << node.op_type << " "
+                << std::chrono::duration<double, std::milli>(
+                       std::chrono::steady_clock::now() - node_start).count() << " ms\n";
     }
   }
   return tensors;

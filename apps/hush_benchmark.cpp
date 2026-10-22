@@ -41,13 +41,20 @@ int main() {
     runtime::Tensor df = runtime::Tensor::from_vector({1, 2, 32, 64}, df_values);
     const int iterations = 5;
     double total_ms = 0.0;
+    double encoder_ms = 0.0, decoder_ms = 0.0, audio_ms = 0.0;
     std::size_t output_count = 0;
     for (int iteration = 0; iteration < iterations; ++iteration) {
       runtime::HushStreamSession session(model, *backend, {});
       runtime::MemoryPool pool;
       const auto start = std::chrono::steady_clock::now();
+      const auto encoder_start = start;
       const auto encoder = session.process_encoder({{"feat_erb", erb}, {"feat_spec", df}}, pool);
+      encoder_ms += std::chrono::duration<double, std::milli>(
+          std::chrono::steady_clock::now() - encoder_start).count();
+      const auto decoder_start = std::chrono::steady_clock::now();
       const auto decoders = session.process_decoders(encoder, {}, {}, pool);
+      decoder_ms += std::chrono::duration<double, std::milli>(
+          std::chrono::steady_clock::now() - decoder_start).count();
       output_count = encoder.size() + decoders.erb.size() + decoders.df.size();
       total_ms += std::chrono::duration<double, std::milli>(
           std::chrono::steady_clock::now() - start).count();
@@ -55,6 +62,8 @@ int main() {
     const double average_ms = total_ms / iterations;
     std::cout << "backend=" << backend->name() << " iterations=" << iterations
               << " average_ms=" << average_ms << " outputs=" << output_count
+              << " encoder_ms=" << encoder_ms / iterations
+              << " decoder_ms=" << decoder_ms / iterations
               << " realtime_10ms_ratio=" << average_ms / 10.0 << "\n";
     return 0;
   } catch (const std::exception& error) {

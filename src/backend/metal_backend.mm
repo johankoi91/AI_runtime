@@ -767,7 +767,6 @@ Tensor MetalBackend::gru_step(
     const Tensor& bias,
     MemoryPool& pool) const {
   return cpu::gru_step(input, hidden, input_weights, hidden_weights, bias, &pool);
-  /*
   if (input.dtype() != DType::Float32 || hidden.dtype() != DType::Float32 ||
       input_weights.dtype() != DType::Float32 || hidden_weights.dtype() != DType::Float32 ||
       bias.dtype() != DType::Float32 || !input.is_contiguous() || !hidden.is_contiguous() ||
@@ -815,7 +814,6 @@ Tensor MetalBackend::gru_step(
   check_status(command_buffer, "metal::gru_step");
   copy_output(output_buffer, output);
   return output;
-  */
 }
 
 Tensor MetalBackend::conv2d(
