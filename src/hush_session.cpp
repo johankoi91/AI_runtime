@@ -8,7 +8,30 @@ HushStreamSession::HushStreamSession(
     const HushModel& model,
     const Backend& backend,
     std::vector<StateBinding> encoder_state)
-    : model_(model), executor_(backend), encoder_state_bindings_(std::move(encoder_state)) {}
+    : model_(model), executor_(backend), encoder_state_bindings_(std::move(encoder_state)) {
+  if (model_.encoder.nodes.empty()) {
+    throw std::invalid_argument("Hush encoder graph must contain at least one node");
+  }
+  for (const StateBinding& binding : encoder_state_bindings_) {
+    bool output_found = false;
+    for (const OnnxNode& node : model_.encoder.nodes) {
+      for (const std::string& output : node.outputs) {
+        output_found = output_found || output == binding.output_name;
+      }
+    }
+    if (!output_found) {
+      throw std::invalid_argument(
+          "Hush encoder state output is not produced by graph: " + binding.output_name);
+    }
+  }
+}
+
+void HushStreamSession::validate_frame(const AudioFrame& frame) {
+  if (frame.format().sample_rate != 16'000 || frame.format().channels != 1 ||
+      frame.sample_count() != 160) {
+    throw std::invalid_argument("Hush frame must be mono 16 kHz with 160 samples");
+  }
+}
 
 std::unordered_map<std::string, Tensor> HushStreamSession::process_encoder(
     const std::unordered_map<std::string, Tensor>& inputs,
@@ -36,6 +59,14 @@ std::unordered_map<std::string, Tensor> HushStreamSession::process_encoder(
   }
   ++frame_index_;
   return outputs;
+}
+
+std::unordered_map<std::string, Tensor> HushStreamSession::process_frame(
+    const AudioFrame& frame,
+    const std::unordered_map<std::string, Tensor>& feature_inputs,
+    MemoryPool& pool) {
+  validate_frame(frame);
+  return process_encoder(feature_inputs, pool);
 }
 
 void HushStreamSession::reset() {

@@ -458,6 +458,26 @@ void test_hush_stream_session(TestContext& ctx) {
   session.reset();
   ctx.expect_true(session.frame_index() == 0, "session reset should clear frame count");
   ctx.expect_true(!session.has_state("h"), "session reset should clear state");
+
+  pool.reset();
+  const auto frame_output = session.process_frame(
+      runtime::AudioFrame::mono_16k(std::vector<float>(160, 0.0f)),
+      {{"x", runtime::Tensor::from_vector({2}, {4.0f, 5.0f})},
+       {"h", runtime::Tensor::from_vector({2}, {1.0f, 1.0f})}},
+      pool);
+  ctx.expect_close(frame_output.at("y").data<float>()[0], 5.0f, 1e-6f,
+                   "session audio frame entry should execute encoder");
+
+  bool rejected_frame = false;
+  try {
+    session.process_frame(runtime::AudioFrame(runtime::AudioFormat{8'000, 1}, std::vector<float>(80)),
+                          {{"x", runtime::Tensor::from_vector({2}, {1.0f, 1.0f})},
+                           {"h", runtime::Tensor::from_vector({2}, {1.0f, 1.0f})}},
+                          pool);
+  } catch (const std::invalid_argument&) {
+    rejected_frame = true;
+  }
+  ctx.expect_true(rejected_frame, "session should reject non-Hush audio format");
 }
 
 }  // namespace
