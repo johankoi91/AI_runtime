@@ -539,6 +539,27 @@ void test_hush_stream_session(TestContext& ctx) {
   }
   ctx.expect_true(invalid_frame_rejected, "session should reject a frame with wrong hop size");
 
+  runtime::HushModel feature_model;
+  feature_model.config = runtime::HushConfig{};
+  runtime::OnnxNode feature_node;
+  feature_node.name = "feature_add";
+  feature_node.op_type = "Add";
+  feature_node.inputs = {"erb", "h"};
+  feature_node.outputs = {"y"};
+  feature_model.encoder.nodes = {feature_node};
+  feature_model.encoder.inputs = {"erb", "h"};
+  feature_model.encoder.outputs = {"y"};
+  runtime::HushStreamSession feature_session(feature_model, backend, {{"h", "y"}});
+  runtime::MemoryPool feature_pool;
+  feature_session.process_encoder(
+      {{"erb", runtime::Tensor::zeros({1, 32})},
+       {"h", runtime::Tensor::zeros({1, 32})}}, feature_pool);
+  feature_pool.reset();
+  const auto feature_output = feature_session.process_audio_frame(
+      runtime::AudioFrame::mono_16k(std::vector<float>(160, 0.1f)), "erb", feature_pool);
+  ctx.expect_true(feature_output.at("y").shape() == runtime::Shape({1, 32}),
+                  "audio frame should feed ERB feature into encoder");
+
   pool.reset();
   const auto second = session.process_encoder(
       {{"x", runtime::Tensor::from_vector({2}, {2.0f, 3.0f})}}, pool);

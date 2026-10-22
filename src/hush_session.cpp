@@ -9,7 +9,8 @@ HushStreamSession::HushStreamSession(
     const HushModel& model,
     const Backend& backend,
     std::vector<StateBinding> encoder_state)
-    : model_(model), executor_(backend), encoder_state_bindings_(std::move(encoder_state)) {
+    : model_(model), executor_(backend), encoder_state_bindings_(std::move(encoder_state)),
+      frontend_(model.config) {
   model_.config.validate();
   if (model_.encoder.nodes.empty()) {
     throw std::invalid_argument("Hush encoder graph must contain at least one node");
@@ -83,8 +84,18 @@ std::unordered_map<std::string, Tensor> HushStreamSession::process_frame(
   return process_encoder(feature_inputs, pool);
 }
 
+std::unordered_map<std::string, Tensor> HushStreamSession::process_audio_frame(
+    const AudioFrame& frame,
+    const std::string& feature_input_name,
+    MemoryPool& pool) {
+  validate_frame(frame);
+  const HushFeatures features = frontend_.process(frame);
+  return process_encoder({{feature_input_name, features.erb}}, pool);
+}
+
 void HushStreamSession::reset() {
   state_.clear();
+  frontend_.reset();
   frame_index_ = 0;
 }
 

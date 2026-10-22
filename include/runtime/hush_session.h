@@ -8,6 +8,7 @@
 #include "runtime/hush_model.h"
 #include "runtime/onnx_executor.h"
 #include "runtime/audio.h"
+#include "runtime/hush_frontend.h"
 
 namespace runtime {
 
@@ -30,6 +31,10 @@ class HushStreamSession {
       const AudioFrame& frame,
       const std::unordered_map<std::string, Tensor>& feature_inputs,
       MemoryPool& pool);
+  std::unordered_map<std::string, Tensor> process_audio_frame(
+      const AudioFrame& frame,
+      const std::string& feature_input_name,
+      MemoryPool& pool);
   void reset();
 
   std::size_t frame_index() const { return frame_index_; }
@@ -41,6 +46,7 @@ class HushStreamSession {
   OnnxExecutor executor_;
   std::vector<StateBinding> encoder_state_bindings_;
   std::unordered_map<std::string, Tensor> state_;
+  HushFrontend frontend_;
   std::size_t frame_index_ = 0;
 };
 
