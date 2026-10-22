@@ -93,6 +93,27 @@ std::unordered_map<std::string, Tensor> HushStreamSession::process_audio_frame(
   return process_encoder({{feature_input_name, features.erb}}, pool);
 }
 
+HushDecoderOutputs HushStreamSession::process_decoders(
+    const std::unordered_map<std::string, Tensor>& encoder_outputs,
+    const std::unordered_map<std::string, Tensor>& erb_inputs,
+    const std::unordered_map<std::string, Tensor>& df_inputs,
+    MemoryPool& pool) const {
+  auto bind_encoder_outputs = [&](const std::unordered_map<std::string, Tensor>& explicit_inputs) {
+    std::unordered_map<std::string, Tensor> inputs = explicit_inputs;
+    for (const std::string& input_name : model_.erb_decoder.inputs) {
+      if (inputs.find(input_name) == inputs.end()) {
+        const auto output = encoder_outputs.find(input_name);
+        if (output != encoder_outputs.end()) inputs.emplace(input_name, output->second);
+      }
+    }
+    return inputs;
+  };
+  HushDecoderOutputs outputs;
+  outputs.erb = executor_.run(model_.erb_decoder, bind_encoder_outputs(erb_inputs), pool);
+  outputs.df = executor_.run(model_.df_decoder, bind_encoder_outputs(df_inputs), pool);
+  return outputs;
+}
+
 std::unordered_map<std::string, Tensor> HushStreamSession::process_audio_frame(
     const AudioFrame& frame,
     const std::string& erb_input_name,

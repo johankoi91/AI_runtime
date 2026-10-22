@@ -17,6 +17,11 @@ struct StateBinding {
   std::string output_name;
 };
 
+struct HushDecoderOutputs {
+  std::unordered_map<std::string, Tensor> erb;
+  std::unordered_map<std::string, Tensor> df;
+};
+
 class HushStreamSession {
  public:
   HushStreamSession(
@@ -35,6 +40,11 @@ class HushStreamSession {
       const AudioFrame& frame,
       const std::string& feature_input_name,
       MemoryPool& pool);
+  HushDecoderOutputs process_decoders(
+      const std::unordered_map<std::string, Tensor>& encoder_outputs,
+      const std::unordered_map<std::string, Tensor>& erb_inputs,
+      const std::unordered_map<std::string, Tensor>& df_inputs,
+      MemoryPool& pool) const;
   std::unordered_map<std::string, Tensor> process_audio_frame(
       const AudioFrame& frame,
       const std::string& erb_input_name,

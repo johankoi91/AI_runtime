@@ -587,6 +587,40 @@ void test_hush_stream_session(TestContext& ctx) {
   ctx.expect_true(dual_output.at("y").shape() == runtime::Shape({1, 32}),
                   "audio frame should feed ERB and DF features into encoder");
 
+  runtime::HushModel decoder_model;
+  decoder_model.config = runtime::HushConfig{};
+  runtime::OnnxNode encoder_node;
+  encoder_node.name = "encoder_relu";
+  encoder_node.op_type = "Relu";
+  encoder_node.inputs = {"input"};
+  encoder_node.outputs = {"hidden"};
+  decoder_model.encoder.nodes = {encoder_node};
+  decoder_model.encoder.inputs = {"input"};
+  decoder_model.encoder.outputs = {"hidden"};
+  runtime::OnnxNode erb_node;
+  erb_node.name = "erb_relu";
+  erb_node.op_type = "Relu";
+  erb_node.inputs = {"hidden"};
+  erb_node.outputs = {"erb_out"};
+  decoder_model.erb_decoder.nodes = {erb_node};
+  decoder_model.erb_decoder.inputs = {"hidden"};
+  decoder_model.erb_decoder.outputs = {"erb_out"};
+  runtime::OnnxNode df_node = erb_node;
+  df_node.name = "df_tanh";
+  df_node.op_type = "Tanh";
+  df_node.outputs = {"df_out"};
+  decoder_model.df_decoder.nodes = {df_node};
+  decoder_model.df_decoder.inputs = {"hidden"};
+  decoder_model.df_decoder.outputs = {"df_out"};
+  runtime::HushStreamSession decoder_session(decoder_model, backend);
+  runtime::MemoryPool decoder_pool;
+  const auto decoder_outputs = decoder_session.process_decoders(
+      {{"hidden", runtime::Tensor::from_vector({2}, {-1.0f, 0.5f})}}, {}, {}, decoder_pool);
+  ctx.expect_close(decoder_outputs.erb.at("erb_out").data<float>()[0], 0.0f, 1e-6f,
+                   "ERB decoder should receive encoder output");
+  ctx.expect_close(decoder_outputs.df.at("df_out").data<float>()[1], std::tanh(0.5f), 1e-6f,
+                   "DF decoder should receive encoder output");
+
   pool.reset();
   const auto second = session.process_encoder(
       {{"x", runtime::Tensor::from_vector({2}, {2.0f, 3.0f})}}, pool);
