@@ -10,6 +10,7 @@ HushStreamSession::HushStreamSession(
     const Backend& backend,
     std::vector<StateBinding> encoder_state)
     : model_(model), executor_(backend), encoder_state_bindings_(std::move(encoder_state)) {
+  model_.config.validate();
   if (model_.encoder.nodes.empty()) {
     throw std::invalid_argument("Hush encoder graph must contain at least one node");
   }
@@ -27,10 +28,10 @@ HushStreamSession::HushStreamSession(
   }
 }
 
-void HushStreamSession::validate_frame(const AudioFrame& frame) {
-  if (frame.format().sample_rate != 16'000 || frame.format().channels != 1 ||
-      frame.sample_count() != 160) {
-    throw std::invalid_argument("Hush frame must be mono 16 kHz with 160 samples");
+void HushStreamSession::validate_frame(const AudioFrame& frame) const {
+  if (frame.format().sample_rate != model_.config.sample_rate ||
+      frame.format().channels != 1 || frame.sample_count() != model_.config.hop_size) {
+    throw std::invalid_argument("Hush frame does not match model audio configuration");
   }
 }
 

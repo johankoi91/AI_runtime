@@ -34,7 +34,7 @@ class HushStreamSession {
 
   std::size_t frame_index() const { return frame_index_; }
   bool has_state(const std::string& input_name) const;
-  static void validate_frame(const AudioFrame& frame);
+  void validate_frame(const AudioFrame& frame) const;
 
  private:
   const HushModel& model_;

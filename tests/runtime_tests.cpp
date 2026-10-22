@@ -412,6 +412,8 @@ void test_hush_model(TestContext& ctx) {
   file.close();
   const runtime::HushModel model = runtime::HushModel::load(path);
   ctx.expect_true(model.config_ini.find("sr=16000") != std::string::npos, "Hush model should load config");
+  ctx.expect_true(model.config.sample_rate == 16000 && model.config.hop_size == 160,
+                  "Hush model should parse audio configuration");
   ctx.expect_true(model.encoder.nodes[0].op_type == "Conv", "Hush model should load encoder graph");
   ctx.expect_true(model.erb_decoder.nodes[0].op_type == "Relu", "Hush model should load ERB decoder graph");
   ctx.expect_true(model.df_decoder.nodes[0].op_type == "GRU", "Hush model should load DF decoder graph");
@@ -439,6 +441,8 @@ void test_shape_kernels(TestContext& ctx) {
 
 void test_hush_stream_session(TestContext& ctx) {
   runtime::HushModel model;
+  model.config_ini = "[df]\nsr=16000\nfft_size=320\nhop_size=160\nnb_erb=32\nnb_df=64\ndf_order=5\n";
+  model.config = runtime::HushConfig::from_ini(model.config_ini);
   runtime::OnnxNode node;
   node.name = "state_add";
   node.op_type = "Add";
@@ -466,6 +470,14 @@ void test_hush_stream_session(TestContext& ctx) {
     missing_input_rejected = true;
   }
   ctx.expect_true(missing_input_rejected, "session should reject missing encoder input");
+
+  bool invalid_frame_rejected = false;
+  try {
+    session.process_frame(runtime::AudioFrame::mono_16k(std::vector<float>(80)), {}, pool);
+  } catch (const std::invalid_argument&) {
+    invalid_frame_rejected = true;
+  }
+  ctx.expect_true(invalid_frame_rejected, "session should reject a frame with wrong hop size");
 
   pool.reset();
   const auto second = session.process_encoder(
