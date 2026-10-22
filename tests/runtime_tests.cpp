@@ -560,6 +560,25 @@ void test_onnx_slice(TestContext& ctx) {
   ctx.expect_close(outputs.at("y").data<float>()[0], 3.0f, 1e-6f, "Slice should start at requested index");
 }
 
+void test_onnx_einsum(TestContext& ctx) {
+  runtime::OnnxGraph graph;
+  runtime::OnnxNode node;
+  node.name = "einsum";
+  node.op_type = "Einsum";
+  node.inputs = {"a", "b"};
+  node.outputs = {"y"};
+  node.attributes.push_back({.name = "equation", .string = "ij,jk->ik"});
+  graph.nodes.push_back(node);
+  runtime::CPUBackend backend;
+  runtime::OnnxExecutor executor(backend);
+  runtime::MemoryPool pool;
+  const auto outputs = executor.run(
+      graph, {{"a", runtime::Tensor::from_vector({1, 2}, {2.0f, 3.0f})},
+              {"b", runtime::Tensor::from_vector({2, 2}, {1.0f, 2.0f, 3.0f, 4.0f})}}, pool);
+  ctx.expect_close(outputs.at("y").data<float>()[0], 11.0f, 1e-6f,
+                   "Einsum matrix equation should use matmul");
+}
+
 void test_shape_kernels(TestContext& ctx) {
   const runtime::Tensor input = runtime::Tensor::from_vector(
       {2, 3}, {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f});
@@ -833,6 +852,7 @@ int main() {
       {"onnx_shape_constant", test_onnx_shape_constant},
       {"onnx_connection_ops", test_onnx_connection_ops},
       {"onnx_slice", test_onnx_slice},
+      {"onnx_einsum", test_onnx_einsum},
       {"hush_frontend", test_hush_frontend},
       {"erb_mask", test_erb_mask},
       {"backend_istft", test_backend_istft},

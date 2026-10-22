@@ -341,6 +341,23 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
       const auto axes = node.inputs.size() > 3 ? tensor_ints(lookup(tensors, node.inputs[3])) : std::vector<std::int64_t>{0};
       const auto steps = node.inputs.size() > 4 ? tensor_ints(lookup(tensors, node.inputs[4])) : std::vector<std::int64_t>{1};
       output = slice_tensor(lookup(tensors, node.inputs[0]), starts, ends, axes, steps, pool);
+    } else if (node.op_type == "Einsum") {
+      if (node.inputs.size() != 2) throw std::runtime_error("Einsum requires two inputs");
+      const auto& equation = graph.attribute(node, "equation").string;
+      const Tensor& lhs = lookup(tensors, node.inputs[0]);
+      const Tensor& rhs = lookup(tensors, node.inputs[1]);
+      if (equation == "ij,jk->ik") {
+        output = backend_.matmul(lhs, rhs, pool);
+      } else if (equation == "i,ij->j") {
+        if (lhs.rank() != 1 || rhs.rank() != 2 || lhs.shape()[0] != rhs.shape()[0]) {
+          throw std::runtime_error("Einsum i,ij->j shape mismatch");
+        }
+        Tensor lhs_matrix = cpu::reshape(lhs, {1, lhs.shape()[0]});
+        output = backend_.matmul(lhs_matrix, rhs, pool);
+        output = cpu::reshape(output, {rhs.shape()[1]});
+      } else {
+        throw std::runtime_error("unsupported Einsum equation: " + equation);
+      }
     } else {
       throw std::runtime_error("unsupported ONNX op in stage 15: " + node.op_type);
     }
