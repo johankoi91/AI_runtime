@@ -2,6 +2,7 @@
 
 #include <numeric>
 #include <algorithm>
+#include <limits>
 #include <stdexcept>
 
 #include "runtime/kernels.h"
@@ -242,10 +243,30 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
       if (node.inputs.size() != 2) throw std::runtime_error("Reshape requires data and shape inputs");
       const Tensor& shape_tensor = lookup(tensors, node.inputs[1]);
       std::vector<std::size_t> shape;
+      std::size_t inferred_index = std::numeric_limits<std::size_t>::max();
+      std::size_t known_elements = 1;
       for (std::size_t index = 0; index < shape_tensor.numel(); ++index) {
         const float value = shape_tensor.data<float>()[index];
-        if (value < 0.0f) throw std::runtime_error("Reshape negative dimensions are unsupported");
-        shape.push_back(static_cast<std::size_t>(value));
+        if (value == -1.0f) {
+          if (inferred_index != std::numeric_limits<std::size_t>::max()) throw std::runtime_error("Reshape allows only one inferred dimension");
+          inferred_index = index;
+          shape.push_back(1);
+        } else if (value == 0.0f) {
+          if (index >= lookup(tensors, node.inputs[0]).rank()) throw std::runtime_error("Reshape zero dimension is out of range");
+          shape.push_back(lookup(tensors, node.inputs[0]).shape()[index]);
+          known_elements *= shape.back();
+        } else if (value > 0.0f) {
+          shape.push_back(static_cast<std::size_t>(value));
+          known_elements *= shape.back();
+        } else {
+          throw std::runtime_error("Reshape has invalid negative dimension");
+        }
+      }
+      if (inferred_index != std::numeric_limits<std::size_t>::max()) {
+        if (known_elements == 0 || lookup(tensors, node.inputs[0]).numel() % known_elements != 0) {
+          throw std::runtime_error("Reshape cannot infer dimension");
+        }
+        shape[inferred_index] = lookup(tensors, node.inputs[0]).numel() / known_elements;
       }
       output = cpu::reshape(lookup(tensors, node.inputs[0]), shape);
     } else if (node.op_type == "Transpose") {
@@ -284,6 +305,22 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
       const auto& value = graph.attribute(node, "value");
       if (!value.has_tensor) throw std::runtime_error("Constant requires a tensor value attribute");
       output = Tensor::from_vector(value.tensor.shape, value.tensor.values);
+    } else if (node.op_type == "ConstantOfShape") {
+      if (node.inputs.size() != 1) throw std::runtime_error("ConstantOfShape requires a shape input");
+      const auto shape_values = tensor_ints(lookup(tensors, node.inputs[0]));
+      Shape shape;
+      for (std::int64_t value : shape_values) {
+        if (value < 0) throw std::runtime_error("ConstantOfShape has a negative dimension");
+        shape.push_back(static_cast<std::size_t>(value));
+      }
+      float fill_value = 0.0f;
+      try {
+        const auto& value = graph.attribute(node, "value");
+        if (value.has_tensor && !value.tensor.values.empty()) fill_value = value.tensor.values[0];
+      } catch (const std::out_of_range&) {
+      }
+      output = Tensor::zeros(shape);
+      output.fill(fill_value);
     } else if (node.op_type == "Cast") {
       if (node.inputs.size() != 1) throw std::runtime_error("Cast requires one input");
       const auto& attribute = graph.attribute(node, "to");

@@ -292,8 +292,8 @@ void test_onnx_weights(TestContext& ctx) {
   append_string_field(graph_input, 1, "x");
   std::vector<std::uint8_t> graph_output;
   append_string_field(graph_output, 1, "z");
-  append_field(graph, 3, graph_input);
-  append_field(graph, 6, graph_output);
+  append_field(graph, 11, graph_input);
+  append_field(graph, 12, graph_output);
   append_field(graph, 5, tensor);
   std::vector<std::uint8_t> model;
   append_field(model, 7, graph);
@@ -401,6 +401,12 @@ std::vector<std::uint8_t> make_minimal_onnx(const std::string& op_type) {
   std::vector<std::uint8_t> graph;
   append_field(graph, 1, node);
   append_field(graph, 2, {'g'});
+  std::vector<std::uint8_t> input;
+  append_string_field(input, 1, "x");
+  std::vector<std::uint8_t> output;
+  append_string_field(output, 1, "y");
+  append_field(graph, 11, input);
+  append_field(graph, 12, output);
   std::vector<std::uint8_t> graph_input;
   append_string_field(graph_input, 1, "x");
   std::vector<std::uint8_t> graph_output;
