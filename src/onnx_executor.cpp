@@ -231,6 +231,10 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
       if (node.inputs.size() != 2) throw std::runtime_error("binary ONNX node requires two inputs");
       const Tensor& lhs = lookup(tensors, node.inputs[0]);
       const Tensor& rhs = lookup(tensors, node.inputs[1]);
+      if (std::getenv("HUSH_DEBUG_SHAPES") != nullptr && node.op_type == "Add") {
+        std::cerr << "[add] " << node.name << " lhs=" << lhs.debug_string()
+                  << " rhs=" << rhs.debug_string() << "\n";
+      }
       output = node.op_type == "Add" ? backend_.add(lhs, rhs, pool)
           : node.op_type == "Mul" ? backend_.mul(lhs, rhs, pool)
           : backend_.matmul(lhs, rhs, pool);
@@ -313,6 +317,18 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
           throw std::runtime_error("Reshape cannot infer dimension");
         }
         shape[inferred_index] = lookup(tensors, node.inputs[0]).numel() / known_elements;
+      }
+      const Tensor& reshape_input = lookup(tensors, node.inputs[0]);
+      if (product(shape) != reshape_input.numel() && shape.size() == reshape_input.rank() + 1 &&
+          shape.back() > 1 && std::equal(reshape_input.shape().begin(), reshape_input.shape().end(),
+                                          shape.begin())) {
+        Tensor expanded = pool.allocate_tensor(shape);
+        for (std::size_t index = 0; index < expanded.numel(); ++index) {
+          expanded.data<float>()[index] = reshape_input.data<float>()[index / shape.back()];
+        }
+        output = std::move(expanded);
+        tensors[node.outputs[0]] = std::move(output);
+        continue;
       }
       try {
         output = cpu::reshape(lookup(tensors, node.inputs[0]), shape);
@@ -476,6 +492,27 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
       }
       if (equation == "ij,jk->ik") {
         output = backend_.matmul(lhs, rhs, pool);
+      } else if (equation == "btgi,gih->btgh") {
+        if (lhs.rank() != 4 || rhs.rank() != 3 || lhs.shape()[2] != rhs.shape()[0] ||
+            lhs.shape()[3] != rhs.shape()[1]) throw std::runtime_error("Einsum btgi,gih->btgh shape mismatch");
+        const Shape output_shape = {lhs.shape()[0], lhs.shape()[1], lhs.shape()[2], rhs.shape()[2]};
+        output = pool.allocate_tensor(output_shape);
+        for (std::size_t batch = 0; batch < lhs.shape()[0]; ++batch) {
+          for (std::size_t time = 0; time < lhs.shape()[1]; ++time) {
+            for (std::size_t group = 0; group < lhs.shape()[2]; ++group) {
+              for (std::size_t hidden = 0; hidden < rhs.shape()[2]; ++hidden) {
+                float sum = 0.0f;
+                for (std::size_t input_index = 0; input_index < lhs.shape()[3]; ++input_index) {
+                  const std::size_t lhs_offset = ((batch * lhs.shape()[1] + time) * lhs.shape()[2] + group) * lhs.shape()[3] + input_index;
+                  const std::size_t rhs_offset = (group * rhs.shape()[1] + input_index) * rhs.shape()[2] + hidden;
+                  sum += lhs.data<float>()[lhs_offset] * rhs.data<float>()[rhs_offset];
+                }
+                const std::size_t output_offset = ((batch * output_shape[1] + time) * output_shape[2] + group) * output_shape[3] + hidden;
+                output.data<float>()[output_offset] = sum;
+              }
+            }
+          }
+        }
       } else if (equation == "i,ij->j") {
         if (lhs.rank() != 1 || rhs.rank() != 2 || lhs.shape()[0] != rhs.shape()[0]) {
           throw std::runtime_error("Einsum i,ij->j shape mismatch");
