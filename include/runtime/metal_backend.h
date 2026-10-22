@@ -38,17 +38,17 @@ class MetalBackend final : public Backend {
       const Tensor& hidden_weights,
       const Tensor& bias,
       MemoryPool& pool) const override;
-  Tensor stft(
-      const Tensor& samples,
-      std::size_t fft_size,
-      std::size_t hop_size,
-      MemoryPool& pool) const;
   Tensor conv_transpose2d(
       const Tensor& input,
       const Tensor& weights,
       const Tensor& bias,
       std::size_t stride,
       std::size_t padding,
+      MemoryPool& pool) const override;
+  Tensor stft(
+      const Tensor& samples,
+      std::size_t fft_size,
+      std::size_t hop_size,
       MemoryPool& pool) const;
   Tensor erb_filterbank(
       const Tensor& spectrum,

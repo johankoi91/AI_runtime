@@ -447,6 +447,31 @@ void test_onnx_conv_attributes(TestContext& ctx) {
                   "ONNX Conv attributes should map to padded 2D Conv");
 }
 
+void test_onnx_conv_transpose(TestContext& ctx) {
+  runtime::OnnxGraph graph;
+  runtime::OnnxNode node;
+  node.name = "deconv";
+  node.op_type = "ConvTranspose";
+  node.inputs = {"x", "w", "b"};
+  node.outputs = {"y"};
+  node.attributes.push_back({"strides", 0, {2, 2}, {}});
+  node.attributes.push_back({"pads", 0, {0, 0, 0, 0}, {}});
+  graph.nodes.push_back(node);
+  graph.initializers = {
+      {.name = "w", .shape = {1, 1, 2, 2}, .values = {1.0f, 0.5f, -1.0f, 2.0f}},
+      {.name = "b", .shape = {1}, .values = {0.25f}},
+  };
+  runtime::CPUBackend backend;
+  runtime::OnnxExecutor executor(backend);
+  runtime::MemoryPool pool;
+  const auto outputs = executor.run(
+      graph, {{"x", runtime::Tensor::from_vector({1, 1, 2, 2}, {1, 2, 3, 4})}}, pool);
+  ctx.expect_true(outputs.at("y").shape() == runtime::Shape({1, 1, 4, 4}),
+                  "ONNX ConvTranspose should map to backend");
+  ctx.expect_close(outputs.at("y").data<float>()[0], 1.25f, 1e-6f,
+                   "ONNX ConvTranspose should preserve bias and kernel output");
+}
+
 void test_shape_kernels(TestContext& ctx) {
   const runtime::Tensor input = runtime::Tensor::from_vector(
       {2, 3}, {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f});
@@ -566,6 +591,7 @@ int main() {
       {"shape_kernels", test_shape_kernels},
       {"hush_stream_session", test_hush_stream_session},
       {"onnx_conv_attributes", test_onnx_conv_attributes},
+      {"onnx_conv_transpose", test_onnx_conv_transpose},
   };
 
   int passed_tests = 0;

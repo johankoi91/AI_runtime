@@ -121,6 +121,29 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
       }
       output = backend_.conv2d(input, weights, bias, static_cast<std::size_t>(strides[0]),
                                static_cast<std::size_t>(pads[0]), pool);
+    } else if (node.op_type == "ConvTranspose") {
+      if (node.inputs.size() < 2 || node.inputs.size() > 3) {
+        throw std::runtime_error("ConvTranspose input count unsupported");
+      }
+      const Tensor& input = lookup(tensors, node.inputs[0]);
+      const Tensor& weights = lookup(tensors, node.inputs[1]);
+      Tensor bias = node.inputs.size() == 3
+          ? lookup(tensors, node.inputs[2])
+          : Tensor::zeros({weights.shape()[1]});
+      const auto strides = attribute_values(graph, node, "strides", {1, 1});
+      const auto pads = attribute_values(graph, node, "pads", {0, 0, 0, 0});
+      const auto dilations = attribute_values(graph, node, "dilations", {1, 1});
+      const auto groups = attribute_values(graph, node, "group", {1});
+      if (strides.size() != 2 || pads.size() != 4 || dilations.size() != 2 || groups.size() != 1 ||
+          strides[0] <= 0 || strides[1] <= 0 || pads[0] < 0 || pads[1] < 0 ||
+          pads[2] < 0 || pads[3] < 0 || dilations[0] != 1 || dilations[1] != 1 || groups[0] != 1 ||
+          pads[0] != pads[2] || pads[1] != pads[3] || strides[0] != strides[1]) {
+        throw std::runtime_error(
+            "ONNX ConvTranspose attributes are outside the supported 2D symmetric subset");
+      }
+      output = backend_.conv_transpose2d(
+          input, weights, bias, static_cast<std::size_t>(strides[0]),
+          static_cast<std::size_t>(pads[0]), pool);
     } else if (node.op_type == "GRU") {
       output = run_gru_step(backend_, node, tensors, pool);
     } else if (node.op_type == "Reshape") {

@@ -52,6 +52,16 @@ Tensor CPUBackend::conv2d(
   return cpu::conv2d(input, weights, bias, stride, padding, &pool);
 }
 
+Tensor CPUBackend::conv_transpose2d(
+    const Tensor& input,
+    const Tensor& weights,
+    const Tensor& bias,
+    std::size_t stride,
+    std::size_t padding,
+    MemoryPool& pool) const {
+  return cpu::conv_transpose2d(input, weights, bias, stride, padding, &pool);
+}
+
 Tensor CPUBackend::gru_step(
     const Tensor& input,
     const Tensor& hidden,

@@ -34,6 +34,9 @@ Tensor conv_transpose2d(
   Tensor output = pool == nullptr
       ? Tensor::zeros({batch, output_channels, output_height, output_width})
       : pool->allocate_tensor({batch, output_channels, output_height, output_width});
+  if (pool != nullptr) {
+    output.fill(0.0f);
+  }
   float* output_data = output.data<float>();
   for (std::size_t batch_index = 0; batch_index < batch; ++batch_index) {
     for (std::size_t input_channel = 0; input_channel < input_channels; ++input_channel) {
