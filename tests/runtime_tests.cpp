@@ -23,6 +23,7 @@
 #include "runtime/kernels.h"
 #include "runtime/onnx_weights.h"
 #include "runtime/hush_bundle.h"
+#include "runtime/hush_session.h"
 #include "runtime/hush_model.h"
 #include "runtime/onnx_executor.h"
 
@@ -428,6 +429,37 @@ void test_shape_kernels(TestContext& ctx) {
   ctx.expect_close(joined.data<float>()[5], 6.0f, 1e-6f, "concat should copy final value");
 }
 
+void test_hush_stream_session(TestContext& ctx) {
+  runtime::HushModel model;
+  runtime::OnnxNode node;
+  node.name = "state_add";
+  node.op_type = "Add";
+  node.inputs = {"x", "h"};
+  node.outputs = {"y"};
+  model.encoder.nodes.push_back(node);
+  runtime::CPUBackend backend;
+  runtime::HushStreamSession session(model, backend, {{"h", "y"}});
+  runtime::MemoryPool pool;
+
+  const auto first = session.process_encoder(
+      {{"x", runtime::Tensor::from_vector({2}, {1.0f, 2.0f})},
+       {"h", runtime::Tensor::from_vector({2}, {10.0f, 20.0f})}},
+      pool);
+  ctx.expect_close(first.at("y").data<float>()[0], 11.0f, 1e-6f, "session first state output");
+  ctx.expect_true(session.frame_index() == 1, "session should count first frame");
+  ctx.expect_true(session.has_state("h"), "session should retain encoder state");
+
+  pool.reset();
+  const auto second = session.process_encoder(
+      {{"x", runtime::Tensor::from_vector({2}, {2.0f, 3.0f})}}, pool);
+  ctx.expect_close(second.at("y").data<float>()[0], 13.0f, 1e-6f, "session second state output");
+  ctx.expect_true(session.frame_index() == 2, "session should count second frame");
+
+  session.reset();
+  ctx.expect_true(session.frame_index() == 0, "session reset should clear frame count");
+  ctx.expect_true(!session.has_state("h"), "session reset should clear state");
+}
+
 }  // namespace
 
 int main() {
@@ -454,6 +486,7 @@ int main() {
       {"hush_bundle", test_hush_bundle},
       {"hush_model", test_hush_model},
       {"shape_kernels", test_shape_kernels},
+      {"hush_stream_session", test_hush_stream_session},
   };
 
   int passed_tests = 0;
