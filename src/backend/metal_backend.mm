@@ -163,8 +163,10 @@ kernel void gru_sequence_kernel(
   state[local_unit] = initial_hidden[local_unit];
   threadgroup_barrier(mem_flags::mem_threadgroup);
   for (uint time = 0; time < time_steps; ++time) {
-    float update = bias[unit], reset = bias[hidden_size + unit];
-    float candidate = bias[2 * hidden_size + unit], recurrent_candidate = 0.0f;
+    float update = bias[unit] + bias[3 * hidden_size + unit];
+    float reset = bias[hidden_size + unit] + bias[4 * hidden_size + unit];
+    float candidate = bias[2 * hidden_size + unit] + bias[5 * hidden_size + unit];
+    float recurrent_candidate = 0.0f;
     for (uint index = 0; index < input_size; ++index) {
         const float value = sequence[time * input_size + index];
       update += input_weights[unit * input_size + index] * value;
