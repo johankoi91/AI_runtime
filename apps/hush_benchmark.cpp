@@ -3,6 +3,7 @@
 #include <iostream>
 #include <memory>
 #include <vector>
+#include <algorithm>
 
 #include "runtime/cpu_backend.h"
 #include "runtime/hush_frontend.h"
@@ -41,6 +42,7 @@ int main() {
     runtime::Tensor df = runtime::Tensor::from_vector({1, 2, 32, 64}, df_values);
     const int iterations = 5;
     double total_ms = 0.0;
+    std::vector<double> durations;
     double encoder_ms = 0.0, decoder_ms = 0.0, audio_ms = 0.0;
     std::size_t output_count = 0;
     runtime::HushStreamSession session(model, *backend, {});
@@ -58,14 +60,24 @@ int main() {
       output_count = encoder.size() + decoders.erb.size() + decoders.df.size();
       total_ms += std::chrono::duration<double, std::milli>(
           std::chrono::steady_clock::now() - start).count();
+      durations.push_back(std::chrono::duration<double, std::milli>(
+          std::chrono::steady_clock::now() - start).count());
       pool.reset();
     }
     const double average_ms = total_ms / iterations;
+    std::sort(durations.begin(), durations.end());
+    const double p50_ms = durations[durations.size() / 2];
+    const double p95_ms = durations[std::min<std::size_t>(durations.size() - 1,
+        static_cast<std::size_t>(durations.size() * 0.95))];
+    const double max_ms = durations.back();
     std::cout << "backend=" << backend->name() << " iterations=" << iterations
               << " average_ms=" << average_ms << " outputs=" << output_count
               << " encoder_ms=" << encoder_ms / iterations
               << " decoder_ms=" << decoder_ms / iterations
-              << " realtime_10ms_ratio=" << average_ms / 10.0 << "\n";
+              << " p50_ms=" << p50_ms << " p95_ms=" << p95_ms
+              << " max_ms=" << max_ms
+              << " realtime_factor_320ms=" << 320.0 / average_ms
+              << " per_10ms_ms=" << average_ms / 32.0 << "\n";
     return 0;
   } catch (const std::exception& error) {
     std::cerr << "benchmark failed: " << error.what() << "\n";
