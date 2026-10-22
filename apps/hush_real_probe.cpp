@@ -1,6 +1,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <vector>
+#include <cmath>
 #include <memory>
 
 #include "runtime/cpu_backend.h"
@@ -123,7 +124,11 @@ int main() {
     std::vector<runtime::Tensor> erb_frames;
     std::vector<runtime::Tensor> df_frames;
     for (int index = 0; index < 32; ++index) {
-      const runtime::AudioFrame frame = runtime::AudioFrame::mono_16k(std::vector<float>(160, 0.0f));
+      std::vector<float> samples(160);
+      for (std::size_t sample = 0; sample < samples.size(); ++sample) {
+        samples[sample] = 0.05f * std::sin(static_cast<float>(sample + index * 160) * 0.07f);
+      }
+      const runtime::AudioFrame frame = runtime::AudioFrame::mono_16k(samples);
       const runtime::HushFeatures features = frontend.process(frame);
       erb_frames.push_back(features.erb);
       df_frames.push_back(features.df);
@@ -154,11 +159,18 @@ int main() {
       std::cout << "df:" << output.first << "=" << output.second.debug_string() << "\n";
     }
     runtime::MemoryPool audio_pool;
+    std::vector<float> audio_samples(160);
+    for (std::size_t sample = 0; sample < audio_samples.size(); ++sample) {
+      audio_samples[sample] = 0.05f * std::sin(static_cast<float>(sample) * 0.07f);
+    }
     const runtime::AudioFrame enhanced = session.process_audio(
-        runtime::AudioFrame::mono_16k(std::vector<float>(160, 0.0f)),
+        runtime::AudioFrame::mono_16k(audio_samples),
         "feat_erb", "feat_spec", "m", *backend, audio_pool);
     std::cout << "enhanced_samples=" << enhanced.sample_count()
-              << " first=" << enhanced.samples().front() << "\n";
+              << " first=" << enhanced.samples().front();
+    double checksum = 0.0;
+    for (float value : enhanced.samples()) checksum += value;
+    std::cout << " checksum=" << checksum << "\n";
     return 0;
   } catch (const std::exception& error) {
     std::cerr << "real Hush probe failed: " << error.what() << "\n";
