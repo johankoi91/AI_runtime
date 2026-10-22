@@ -684,6 +684,19 @@ void test_hush_frontend(TestContext& ctx) {
                   "Hush frontend should use backend STFT");
 }
 
+void test_erb_mask(TestContext& ctx) {
+  const runtime::Tensor spectrum = runtime::Tensor::from_vector(
+      {1, 2, 2}, {1.0f, 2.0f, 3.0f, 4.0f});
+  const runtime::Tensor mask = runtime::Tensor::from_vector({1, 2}, {0.5f, 0.25f});
+  const runtime::Tensor projection = runtime::Tensor::from_vector(
+      {2, 2}, {1.0f, 0.0f, 0.0f, 2.0f});
+  const runtime::Tensor output = runtime::cpu::apply_erb_mask(spectrum, mask, projection);
+  ctx.expect_close(output.data<float>()[0], 0.5f, 1e-6f, "ERB mask real bin 0");
+  ctx.expect_close(output.data<float>()[1], 1.0f, 1e-6f, "ERB mask imag bin 0");
+  ctx.expect_close(output.data<float>()[2], 1.5f, 1e-6f, "ERB mask real bin 1");
+  ctx.expect_close(output.data<float>()[3], 2.0f, 1e-6f, "ERB mask imag bin 1");
+}
+
 }  // namespace
 
 int main() {
@@ -715,6 +728,7 @@ int main() {
       {"onnx_conv_attributes", test_onnx_conv_attributes},
       {"onnx_conv_transpose", test_onnx_conv_transpose},
       {"hush_frontend", test_hush_frontend},
+      {"erb_mask", test_erb_mask},
   };
 
   int passed_tests = 0;
