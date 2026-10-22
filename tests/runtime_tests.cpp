@@ -570,6 +570,23 @@ void test_hush_stream_session(TestContext& ctx) {
   ctx.expect_true(feature_output.at("y").shape() == runtime::Shape({1, 32}),
                   "audio frame should feed ERB feature into encoder");
 
+  runtime::HushModel dual_feature_model;
+  dual_feature_model.config = runtime::HushConfig{};
+  runtime::OnnxNode dual_node;
+  dual_node.name = "dual_add";
+  dual_node.op_type = "Relu";
+  dual_node.inputs = {"erb"};
+  dual_node.outputs = {"y"};
+  dual_feature_model.encoder.nodes = {dual_node};
+  dual_feature_model.encoder.inputs = {"erb", "df"};
+  dual_feature_model.encoder.outputs = {"y"};
+  runtime::HushStreamSession dual_session(dual_feature_model, backend);
+  runtime::MemoryPool dual_pool;
+  const auto dual_output = dual_session.process_audio_frame(
+      runtime::AudioFrame::mono_16k(std::vector<float>(160, 0.1f)), "erb", "df", dual_pool);
+  ctx.expect_true(dual_output.at("y").shape() == runtime::Shape({1, 32}),
+                  "audio frame should feed ERB and DF features into encoder");
+
   pool.reset();
   const auto second = session.process_encoder(
       {{"x", runtime::Tensor::from_vector({2}, {2.0f, 3.0f})}}, pool);

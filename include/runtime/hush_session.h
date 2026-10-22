@@ -35,6 +35,11 @@ class HushStreamSession {
       const AudioFrame& frame,
       const std::string& feature_input_name,
       MemoryPool& pool);
+  std::unordered_map<std::string, Tensor> process_audio_frame(
+      const AudioFrame& frame,
+      const std::string& erb_input_name,
+      const std::string& df_input_name,
+      MemoryPool& pool);
   void reset();
 
   std::size_t frame_index() const { return frame_index_; }

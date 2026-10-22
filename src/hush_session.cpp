@@ -93,6 +93,17 @@ std::unordered_map<std::string, Tensor> HushStreamSession::process_audio_frame(
   return process_encoder({{feature_input_name, features.erb}}, pool);
 }
 
+std::unordered_map<std::string, Tensor> HushStreamSession::process_audio_frame(
+    const AudioFrame& frame,
+    const std::string& erb_input_name,
+    const std::string& df_input_name,
+    MemoryPool& pool) {
+  validate_frame(frame);
+  const HushFeatures features = frontend_.process(frame);
+  return process_encoder(
+      {{erb_input_name, features.erb}, {df_input_name, features.df}}, pool);
+}
+
 void HushStreamSession::reset() {
   state_.clear();
   frontend_.reset();
