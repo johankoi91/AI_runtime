@@ -5,6 +5,7 @@
 
 #include "runtime/backend.h"
 #include "runtime/onnx_weights.h"
+#include "runtime/onnx_plan.h"
 
 namespace runtime {
 
@@ -14,6 +15,11 @@ class OnnxExecutor {
 
   std::unordered_map<std::string, Tensor> run(
       const OnnxGraph& graph,
+      const std::unordered_map<std::string, Tensor>& inputs,
+      MemoryPool& pool) const;
+  std::unordered_map<std::string, Tensor> run(
+      const OnnxGraph& graph,
+      const OnnxExecutionPlan& plan,
       const std::unordered_map<std::string, Tensor>& inputs,
       MemoryPool& pool) const;
 

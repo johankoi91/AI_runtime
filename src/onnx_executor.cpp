@@ -315,11 +315,20 @@ Tensor run_gru_step(const Backend& backend, const OnnxNode& node,
 
 std::unordered_map<std::string, Tensor> OnnxExecutor::run(
     const OnnxGraph& graph, const std::unordered_map<std::string, Tensor>& inputs, MemoryPool& pool) const {
+  return run(graph, OnnxExecutionPlan::compile(graph), inputs, pool);
+}
+
+std::unordered_map<std::string, Tensor> OnnxExecutor::run(
+    const OnnxGraph& graph,
+    const OnnxExecutionPlan& plan,
+    const std::unordered_map<std::string, Tensor>& inputs,
+    MemoryPool& pool) const {
   std::unordered_map<std::string, Tensor> tensors = inputs;
   for (const WeightTensor& initializer : graph.initializers) {
     tensors[initializer.name] = Tensor::from_vector(initializer.shape, initializer.values);
   }
-  for (const OnnxNode& node : graph.nodes) {
+  for (const PlannedNode& planned : plan.nodes()) {
+    const OnnxNode& node = graph.nodes[planned.graph_index];
     const auto node_start = std::chrono::steady_clock::now();
     if (node.outputs.empty() || node.outputs.size() > 2) throw std::runtime_error("ONNX node output count unsupported: " + node.name);
     Tensor output;
