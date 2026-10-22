@@ -20,6 +20,7 @@ add_library(mini_runtime
   src/hush_bundle.cpp
   src/hush_model.cpp
   src/hush_session.cpp
+  src/hush_frontend.cpp
   src/onnx_executor.cpp
   src/graph.cpp
   src/executor.cpp

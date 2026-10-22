@@ -24,6 +24,7 @@
 #include "runtime/onnx_weights.h"
 #include "runtime/hush_bundle.h"
 #include "runtime/hush_session.h"
+#include "runtime/hush_frontend.h"
 #include "runtime/hush_model.h"
 #include "runtime/onnx_executor.h"
 
@@ -569,6 +570,27 @@ void test_hush_stream_session(TestContext& ctx) {
   ctx.expect_true(rejected_frame, "session should reject non-Hush audio format");
 }
 
+void test_hush_frontend(TestContext& ctx) {
+  runtime::HushConfig config;
+  runtime::HushFrontend frontend(config);
+  const runtime::HushFeatures features = frontend.process(
+      runtime::AudioFrame::mono_16k(std::vector<float>(160, 0.25f)));
+  ctx.expect_true(features.spectrum.shape() == runtime::Shape({1, 161, 2}),
+                  "Hush frontend should produce one complex spectrum frame");
+  ctx.expect_true(features.erb.shape() == runtime::Shape({1, 32}),
+                  "Hush frontend should produce 32 ERB features");
+  ctx.expect_true(std::isfinite(features.spectrum.data<float>()[0]),
+                  "Hush frontend spectrum should contain finite values");
+  frontend.reset();
+  bool wrong_frame_rejected = false;
+  try {
+    frontend.process(runtime::AudioFrame::mono_16k(std::vector<float>(80)));
+  } catch (const std::invalid_argument&) {
+    wrong_frame_rejected = true;
+  }
+  ctx.expect_true(wrong_frame_rejected, "Hush frontend should reject wrong frame length");
+}
+
 }  // namespace
 
 int main() {
@@ -598,6 +620,7 @@ int main() {
       {"hush_stream_session", test_hush_stream_session},
       {"onnx_conv_attributes", test_onnx_conv_attributes},
       {"onnx_conv_transpose", test_onnx_conv_transpose},
+      {"hush_frontend", test_hush_frontend},
   };
 
   int passed_tests = 0;
