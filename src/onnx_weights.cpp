@@ -109,6 +109,55 @@ std::vector<float> packed_float(const std::vector<std::uint8_t>& bytes) {
   return values;
 }
 
+float half_to_float(std::uint16_t bits) {
+  const std::uint32_t sign = static_cast<std::uint32_t>(bits & 0x8000) << 16;
+  const std::uint32_t exponent = (bits >> 10) & 0x1f;
+  const std::uint32_t fraction = bits & 0x3ff;
+  std::uint32_t result = 0;
+  if (exponent == 0) {
+    if (fraction != 0) {
+      std::uint32_t normalized = fraction;
+      int shift = 0;
+      while ((normalized & 0x400) == 0) {
+        normalized <<= 1;
+        ++shift;
+      }
+      result = sign | static_cast<std::uint32_t>(127 - 15 - shift + 1) << 23 |
+          ((normalized & 0x3ff) << 13);
+    }
+  } else if (exponent == 0x1f) {
+    result = sign | 0x7f800000 | (fraction << 13);
+  } else {
+    result = sign | ((exponent + 112) << 23) | (fraction << 13);
+  }
+  float value;
+  std::memcpy(&value, &result, sizeof(value));
+  return value;
+}
+
+std::vector<float> packed_half(const std::vector<std::uint8_t>& bytes) {
+  if (bytes.size() % sizeof(std::uint16_t) != 0) throw std::runtime_error("invalid packed float16 data");
+  std::vector<float> values(bytes.size() / sizeof(std::uint16_t));
+  for (std::size_t index = 0; index < values.size(); ++index) {
+    const std::uint16_t bits = static_cast<std::uint16_t>(bytes[index * 2]) |
+        static_cast<std::uint16_t>(bytes[index * 2 + 1]) << 8;
+    values[index] = half_to_float(bits);
+  }
+  return values;
+}
+
+template <typename Integer>
+std::vector<float> packed_integer(const std::vector<std::uint8_t>& bytes) {
+  if (bytes.size() % sizeof(Integer) != 0) throw std::runtime_error("invalid packed integer data");
+  std::vector<float> values(bytes.size() / sizeof(Integer));
+  for (std::size_t index = 0; index < values.size(); ++index) {
+    Integer value{};
+    std::memcpy(&value, bytes.data() + index * sizeof(Integer), sizeof(Integer));
+    values[index] = static_cast<float>(value);
+  }
+  return values;
+}
+
 std::size_t numel(const std::vector<std::size_t>& shape) {
   std::size_t result = 1;
   for (std::size_t dimension : shape) {
@@ -157,9 +206,14 @@ WeightTensor parse_tensor(const std::vector<std::uint8_t>& bytes) {
       reader.skip(wire);
     }
   }
-  if (data_type != 1) throw std::runtime_error("ONNX initializer is not float32");
+  if (data_type != 1 && data_type != 10 && data_type != 6 && data_type != 7) {
+    throw std::runtime_error("unsupported ONNX initializer data type");
+  }
   if (!raw_data.empty()) {
-    float_data = packed_float(raw_data);
+    if (data_type == 10) float_data = packed_half(raw_data);
+    else if (data_type == 6) float_data = packed_integer<std::int32_t>(raw_data);
+    else if (data_type == 7) float_data = packed_integer<std::int64_t>(raw_data);
+    else float_data = packed_float(raw_data);
   }
   if (float_data.size() != numel(tensor.shape)) {
     throw std::runtime_error("ONNX initializer shape does not match float data");
@@ -233,9 +287,9 @@ OnnxGraph parse_graph(const std::vector<std::uint8_t>& bytes) {
     const unsigned wire = static_cast<unsigned>(key & 7);
     if (field == 1 && wire == 2) graph.nodes.push_back(parse_node(reader.length_delimited()));
     else if (field == 2 && wire == 2) graph.name = parse_string(reader.length_delimited());
-    else if (field == 3 && wire == 2) graph.inputs.push_back(parse_value_info_name(reader.length_delimited()));
+    else if (field == 11 && wire == 2) graph.inputs.push_back(parse_value_info_name(reader.length_delimited()));
     else if (field == 5 && wire == 2) graph.initializers.push_back(parse_tensor(reader.length_delimited()));
-    else if (field == 6 && wire == 2) graph.outputs.push_back(parse_value_info_name(reader.length_delimited()));
+    else if (field == 12 && wire == 2) graph.outputs.push_back(parse_value_info_name(reader.length_delimited()));
     else reader.skip(wire);
   }
   return graph;
