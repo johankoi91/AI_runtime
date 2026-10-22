@@ -20,6 +20,11 @@ int main() {
     const char* names[] = {"encoder", "erb_decoder", "df_decoder"};
     for (int index = 0; index < 3; ++index) {
       std::cout << names[index] << ": nodes=" << reports[index].node_count << " ops=";
+      const runtime::OnnxGraph* graphs[] = {&model.encoder, &model.erb_decoder, &model.df_decoder};
+      std::cout << " inputs=";
+      for (const auto& input : graphs[index]->inputs) std::cout << input << ',';
+      std::cout << " outputs=";
+      for (const auto& output : graphs[index]->outputs) std::cout << output << ',';
       for (std::size_t op_index = 0; op_index < reports[index].op_types.size(); ++op_index) {
         if (op_index > 0) std::cout << ',';
         std::cout << reports[index].op_types[op_index];

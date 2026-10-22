@@ -48,8 +48,9 @@ OnnxGraph read_graph_entry(const HushModelBundle& bundle, const std::string& nam
 
 HushGraphReport inspect_hush_graph(const OnnxGraph& graph) {
   static const std::vector<std::string> supported = {
-      "Add", "Mul", "MatMul", "Relu", "Sigmoid", "Tanh", "Conv", "GRU",
-      "Reshape", "Transpose", "Concat", "Flatten"};
+      "Add", "Mul", "MatMul", "Relu", "Sigmoid", "Tanh", "Conv", "ConvTranspose", "GRU",
+      "Reshape", "Transpose", "Concat", "Flatten", "Constant", "ConstantOfShape", "Shape",
+      "Cast", "Pad", "Gather", "Unsqueeze", "Squeeze", "Slice", "Einsum"};
   HushGraphReport report;
   report.node_count = graph.nodes.size();
   report.has_inputs = !graph.inputs.empty();
