@@ -116,6 +116,12 @@ void HushConfig::validate() const {
 }
 
 HushModel HushModel::load(const std::string& path) {
+  HushModel model = load_for_inspection(path);
+  validate_hush_model(model);
+  return model;
+}
+
+HushModel HushModel::load_for_inspection(const std::string& path) {
   const HushModelBundle bundle = HushModelBundle::read(path);
   const auto& config = find_entry(bundle, "config.ini");
   HushModel model;
@@ -124,7 +130,6 @@ HushModel HushModel::load(const std::string& path) {
   model.encoder = read_graph_entry(bundle, "enc.onnx");
   model.erb_decoder = read_graph_entry(bundle, "erb_dec.onnx");
   model.df_decoder = read_graph_entry(bundle, "df_dec.onnx");
-  validate_hush_model(model);
   return model;
 }
 

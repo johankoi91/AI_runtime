@@ -65,6 +65,12 @@ set_target_properties(mini_runtime_demo PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin
 )
 
+add_executable(hush_inspect apps/hush_inspect.cpp)
+target_link_libraries(hush_inspect PRIVATE mini_runtime)
+set_target_properties(hush_inspect PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin
+)
+
 if(APPLE)
   add_executable(mini_runtime_metal_demo apps/metal_demo.cpp)
   target_link_libraries(mini_runtime_metal_demo PRIVATE mini_runtime)

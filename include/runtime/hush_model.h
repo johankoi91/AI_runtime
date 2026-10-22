@@ -28,6 +28,7 @@ struct HushModel {
   OnnxGraph df_decoder;
 
   static HushModel load(const std::string& path);
+  static HushModel load_for_inspection(const std::string& path);
 };
 
 struct HushGraphReport {
