@@ -470,6 +470,10 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
       const auto& equation = graph.attribute(node, "equation").string;
       const Tensor& lhs = lookup(tensors, node.inputs[0]);
       const Tensor& rhs = lookup(tensors, node.inputs[1]);
+      if (std::getenv("HUSH_DEBUG_SHAPES") != nullptr) {
+        std::cerr << "[einsum] " << node.name << " equation=" << equation
+                  << " lhs=" << lhs.debug_string() << " rhs=" << rhs.debug_string() << "\n";
+      }
       if (equation == "ij,jk->ik") {
         output = backend_.matmul(lhs, rhs, pool);
       } else if (equation == "i,ij->j") {
