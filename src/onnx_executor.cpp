@@ -86,6 +86,53 @@ Tensor pad_tensor(const Tensor& input, const std::vector<std::int64_t>& pads, fl
   return output;
 }
 
+Tensor slice_tensor(
+    const Tensor& input,
+    const std::vector<std::int64_t>& starts,
+    const std::vector<std::int64_t>& ends,
+    const std::vector<std::int64_t>& axes,
+    const std::vector<std::int64_t>& steps,
+    MemoryPool& pool) {
+  if (!input.is_contiguous() || starts.size() != ends.size() || starts.size() != axes.size() ||
+      starts.size() != steps.size()) throw std::runtime_error("Slice arguments have mismatched lengths");
+  Shape output_shape = input.shape();
+  std::vector<std::size_t> begin(input.rank(), 0);
+  std::vector<std::size_t> stride(input.rank(), 1);
+  for (std::size_t index = 0; index < axes.size(); ++index) {
+    if (axes[index] < 0 || static_cast<std::size_t>(axes[index]) >= input.rank() || steps[index] <= 0) {
+      throw std::runtime_error("Slice supports non-negative axes and positive steps only");
+    }
+    const std::size_t axis = static_cast<std::size_t>(axes[index]);
+    const std::int64_t dimension = static_cast<std::int64_t>(input.shape()[axis]);
+    const std::int64_t start = std::max<std::int64_t>(0, std::min(starts[index], dimension));
+    const std::int64_t end = std::max<std::int64_t>(start, std::min(ends[index], dimension));
+    begin[axis] = static_cast<std::size_t>(start);
+    stride[axis] = static_cast<std::size_t>(steps[index]);
+    output_shape[axis] = end <= start ? 0 : static_cast<std::size_t>((end - start + steps[index] - 1) / steps[index]);
+  }
+  if (std::find(output_shape.begin(), output_shape.end(), 0) != output_shape.end()) {
+    throw std::runtime_error("empty Slice outputs are unsupported");
+  }
+  Tensor output = pool.allocate_tensor(output_shape);
+  std::vector<std::size_t> output_index(output.rank());
+  std::vector<std::size_t> input_strides(input.rank(), 1);
+  for (std::size_t dimension = input.rank(); dimension-- > 0;) {
+    if (dimension + 1 < input.rank()) input_strides[dimension] = input_strides[dimension + 1] * input.shape()[dimension + 1];
+  }
+  for (std::size_t linear = 0; linear < output.numel(); ++linear) {
+    std::size_t remaining = linear;
+    std::size_t input_offset = 0;
+    for (std::size_t dimension = output.rank(); dimension-- > 0;) {
+      output_index[dimension] = remaining % output_shape[dimension];
+      remaining /= output_shape[dimension];
+      input_offset += (begin[dimension] + output_index[dimension] * stride[dimension]) *
+          input_strides[dimension];
+    }
+    output.data<float>()[linear] = input.data<float>()[input_offset];
+  }
+  return output;
+}
+
 Tensor run_gru_step(const Backend& backend, const OnnxNode& node,
                    const std::unordered_map<std::string, Tensor>& tensors, MemoryPool& pool) {
   if (node.inputs.size() < 5) throw std::runtime_error("stage 15 GRU requires X,W,R,B,initial_h");
@@ -287,6 +334,13 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
       float value = 0.0f;
       if (node.inputs.size() == 3) value = lookup(tensors, node.inputs[2]).data<float>()[0];
       output = pad_tensor(lookup(tensors, node.inputs[0]), pads, value, pool);
+    } else if (node.op_type == "Slice") {
+      if (node.inputs.size() < 3 || node.inputs.size() > 5) throw std::runtime_error("Slice input count unsupported");
+      const auto starts = tensor_ints(lookup(tensors, node.inputs[1]));
+      const auto ends = tensor_ints(lookup(tensors, node.inputs[2]));
+      const auto axes = node.inputs.size() > 3 ? tensor_ints(lookup(tensors, node.inputs[3])) : std::vector<std::int64_t>{0};
+      const auto steps = node.inputs.size() > 4 ? tensor_ints(lookup(tensors, node.inputs[4])) : std::vector<std::int64_t>{1};
+      output = slice_tensor(lookup(tensors, node.inputs[0]), starts, ends, axes, steps, pool);
     } else {
       throw std::runtime_error("unsupported ONNX op in stage 15: " + node.op_type);
     }

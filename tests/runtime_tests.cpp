@@ -541,6 +541,25 @@ void test_onnx_connection_ops(TestContext& ctx) {
   ctx.expect_true(outputs.at("p").shape() == runtime::Shape({4, 4}), "Pad should expand both dimensions");
 }
 
+void test_onnx_slice(TestContext& ctx) {
+  runtime::OnnxGraph graph;
+  graph.initializers = {
+      {.name = "starts", .shape = {1}, .values = {1.0f}},
+      {.name = "ends", .shape = {1}, .values = {3.0f}},
+      {.name = "axes", .shape = {1}, .values = {0.0f}},
+      {.name = "steps", .shape = {1}, .values = {1.0f}},
+  };
+  graph.nodes.push_back({.name = "slice", .op_type = "Slice",
+                         .inputs = {"x", "starts", "ends", "axes", "steps"}, .outputs = {"y"}});
+  runtime::CPUBackend backend;
+  runtime::OnnxExecutor executor(backend);
+  runtime::MemoryPool pool;
+  const auto outputs = executor.run(
+      graph, {{"x", runtime::Tensor::from_vector({4, 2}, {1, 2, 3, 4, 5, 6, 7, 8})}}, pool);
+  ctx.expect_true(outputs.at("y").shape() == runtime::Shape({2, 2}), "Slice should reduce the selected axis");
+  ctx.expect_close(outputs.at("y").data<float>()[0], 3.0f, 1e-6f, "Slice should start at requested index");
+}
+
 void test_shape_kernels(TestContext& ctx) {
   const runtime::Tensor input = runtime::Tensor::from_vector(
       {2, 3}, {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f});
@@ -813,6 +832,7 @@ int main() {
       {"onnx_conv_transpose", test_onnx_conv_transpose},
       {"onnx_shape_constant", test_onnx_shape_constant},
       {"onnx_connection_ops", test_onnx_connection_ops},
+      {"onnx_slice", test_onnx_slice},
       {"hush_frontend", test_hush_frontend},
       {"erb_mask", test_erb_mask},
       {"backend_istft", test_backend_istft},
