@@ -12,6 +12,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 add_library(mini_runtime
   src/audio.cpp
+  src/wav.cpp
   src/spectral.cpp
   src/tensor.cpp
   src/memory_pool.cpp
@@ -82,6 +83,10 @@ target_link_libraries(hush_stability PRIVATE mini_runtime)
 set_target_properties(hush_stability PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin
 )
+
+add_executable(hush_wav_demo apps/hush_wav_demo.cpp)
+target_link_libraries(hush_wav_demo PRIVATE mini_runtime)
+set_target_properties(hush_wav_demo PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
 
 add_executable(hush_inspect apps/hush_inspect.cpp)
 target_link_libraries(hush_inspect PRIVATE mini_runtime)

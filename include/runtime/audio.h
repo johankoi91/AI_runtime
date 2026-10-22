@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <vector>
+#include <string>
 
 namespace runtime {
 
@@ -48,5 +49,9 @@ class AudioStream {
   StreamConfig config_;
   std::vector<float> pending_samples_;
 };
+
+std::vector<float> read_wav_mono16(const std::string& path, std::size_t expected_sample_rate = 16'000);
+void write_wav_mono16(const std::string& path, const std::vector<float>& samples,
+                      std::size_t sample_rate = 16'000);
 
 }  // namespace runtime
