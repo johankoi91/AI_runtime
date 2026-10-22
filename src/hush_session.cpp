@@ -101,7 +101,8 @@ HushDecoderOutputs HushStreamSession::process_decoders(
     const std::unordered_map<std::string, Tensor>& df_inputs,
     MemoryPool& pool) const {
   auto bind_encoder_outputs = [&](const std::unordered_map<std::string, Tensor>& explicit_inputs) {
-    std::unordered_map<std::string, Tensor> inputs = explicit_inputs;
+    std::unordered_map<std::string, Tensor> inputs = encoder_outputs;
+    for (const auto& item : explicit_inputs) inputs[item.first] = item.second;
     for (const std::string& input_name : model_.erb_decoder.inputs) {
       if (inputs.find(input_name) == inputs.end()) {
         const auto output = encoder_outputs.find(input_name);
@@ -154,11 +155,19 @@ AudioFrame HushStreamSession::process_audio(
   if (mask_iterator == decoder_outputs.erb.end()) {
     throw std::runtime_error("Hush ERB decoder mask output is missing: " + mask_output_name);
   }
+  Tensor mask = mask_iterator->second;
+  if (mask.rank() == 4) {
+    const std::size_t bands = mask.shape()[3];
+    const std::size_t time = mask.shape()[2] - 1;
+    std::vector<float> values(bands);
+    std::copy_n(mask.data<float>() + time * bands, bands, values.data());
+    mask = Tensor::from_vector({1, bands}, values);
+  }
   const Tensor projection = Tensor::from_vector(
-      {features.spectrum.shape()[1], mask_iterator->second.shape()[1]},
-      std::vector<float>(features.spectrum.shape()[1] * mask_iterator->second.shape()[1], 1.0f));
+      {features.spectrum.shape()[1], mask.shape()[1]},
+      std::vector<float>(features.spectrum.shape()[1] * mask.shape()[1], 1.0f));
   const Tensor masked = cpu::apply_erb_mask(
-      features.spectrum, mask_iterator->second, projection, &pool);
+      features.spectrum, mask, projection, &pool);
   const Tensor audio = backend.istft(
       masked, model_.config.fft_size, model_.config.hop_size, frame.sample_count(), pool);
   return AudioFrame(AudioFormat{model_.config.sample_rate, 1},

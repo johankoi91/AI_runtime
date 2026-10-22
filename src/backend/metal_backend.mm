@@ -158,8 +158,9 @@ kernel void conv2d_kernel(
     constant uint& output_width [[buffer(12)]],
     constant uint& stride_h [[buffer(13)]],
     constant uint& stride_w [[buffer(14)]],
-    constant uint& padding [[buffer(15)]],
-    constant uint& groups [[buffer(16)]],
+    constant uint& padding_h [[buffer(15)]],
+    constant uint& padding_w [[buffer(16)]],
+    constant uint& groups [[buffer(17)]],
     uint index [[thread_position_in_grid]]) {
   const uint total = batch * output_channels * output_height * output_width;
   if (index >= total) {
@@ -181,13 +182,13 @@ kernel void conv2d_kernel(
       for (uint kernel_x = 0; kernel_x < kernel_width; ++kernel_x) {
         const uint input_y = output_y * stride_h + kernel_y;
         const uint input_x = output_x * stride_w + kernel_x;
-        if (input_y < padding || input_x < padding ||
-            input_y - padding >= input_height || input_x - padding >= input_width) {
+        if (input_y < padding_h || input_x < padding_w ||
+            input_y - padding_h >= input_height || input_x - padding_w >= input_width) {
           continue;
         }
         const uint input_offset =
             ((batch_index * input_channels + input_channel) * input_height +
-             input_y - padding) * input_width + input_x - padding;
+             input_y - padding_h) * input_width + input_x - padding_w;
         const uint weight_offset =
             ((output_channel * channels_per_group + local_channel) * kernel_height + kernel_y) *
             kernel_width + kernel_x;
@@ -814,7 +815,8 @@ Tensor MetalBackend::conv2d(
     const Tensor& bias,
     std::size_t stride_h,
     std::size_t stride_w,
-    std::size_t padding,
+    std::size_t padding_h,
+    std::size_t padding_w,
     std::size_t groups,
     MemoryPool& pool) const {
   if (stride_h == 0 || stride_w == 0 || input.dtype() != DType::Float32 || weights.dtype() != DType::Float32 ||
@@ -832,11 +834,11 @@ Tensor MetalBackend::conv2d(
   const std::size_t kernel_width = weights.shape()[3];
   if (groups == 0 || input_channels % groups != 0 || output_channels % groups != 0 ||
       kernel_channels != input_channels / groups || bias.shape()[0] != output_channels ||
-      input_height + 2 * padding < kernel_height || input_width + 2 * padding < kernel_width) {
+      input_height + 2 * padding_h < kernel_height || input_width + 2 * padding_w < kernel_width) {
     throw std::invalid_argument("metal::conv2d weight shapes do not match input");
   }
-  const std::size_t output_height = (input_height + 2 * padding - kernel_height) / stride_h + 1;
-  const std::size_t output_width = (input_width + 2 * padding - kernel_width) / stride_w + 1;
+  const std::size_t output_height = (input_height + 2 * padding_h - kernel_height) / stride_h + 1;
+  const std::size_t output_width = (input_width + 2 * padding_w - kernel_width) / stride_w + 1;
   Tensor output = pool.allocate_tensor(
       {batch, output_channels, output_height, output_width}, DType::Float32);
   id<MTLBuffer> input_buffer = make_input_buffer(impl_->device, input);
@@ -850,8 +852,8 @@ Tensor MetalBackend::conv2d(
       static_cast<std::uint32_t>(output_channels), static_cast<std::uint32_t>(kernel_height),
       static_cast<std::uint32_t>(kernel_width), static_cast<std::uint32_t>(output_height),
       static_cast<std::uint32_t>(output_width), static_cast<std::uint32_t>(stride_h),
-      static_cast<std::uint32_t>(stride_w), static_cast<std::uint32_t>(padding),
-      static_cast<std::uint32_t>(groups)};
+      static_cast<std::uint32_t>(stride_w), static_cast<std::uint32_t>(padding_h),
+      static_cast<std::uint32_t>(padding_w), static_cast<std::uint32_t>(groups)};
   id<MTLCommandBuffer> command_buffer = [impl_->queue commandBuffer];
   id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
   [encoder setComputePipelineState:impl_->conv2d_pipeline];
@@ -859,7 +861,7 @@ Tensor MetalBackend::conv2d(
   [encoder setBuffer:weights_buffer offset:0 atIndex:1];
   [encoder setBuffer:bias_buffer offset:0 atIndex:2];
   [encoder setBuffer:output_buffer offset:0 atIndex:3];
-  for (NSUInteger index = 0; index < 13; ++index) {
+  for (NSUInteger index = 0; index < 14; ++index) {
     [encoder setBytes:&values[index] length:sizeof(values[index]) atIndex:4 + index];
   }
   const NSUInteger count = output.numel();
@@ -878,10 +880,13 @@ Tensor MetalBackend::conv_transpose2d(
     const Tensor& input,
     const Tensor& weights,
     const Tensor& bias,
-    std::size_t stride,
-    std::size_t padding,
+    std::size_t stride_h,
+    std::size_t stride_w,
+    std::size_t padding_h,
+    std::size_t padding_w,
+    std::size_t groups,
     MemoryPool& pool) const {
-  if (stride == 0 || input.dtype() != DType::Float32 || weights.dtype() != DType::Float32 ||
+  if (stride_h == 0 || stride_w == 0 || input.dtype() != DType::Float32 || weights.dtype() != DType::Float32 ||
       bias.dtype() != DType::Float32 || !input.is_contiguous() || !weights.is_contiguous() ||
       !bias.is_contiguous() || input.rank() != 4 || weights.rank() != 4 || bias.rank() != 1) {
     throw std::invalid_argument("metal::conv_transpose2d requires contiguous float32 NCHW tensors");
@@ -891,16 +896,16 @@ Tensor MetalBackend::conv_transpose2d(
   const std::size_t input_height = input.shape()[2];
   const std::size_t input_width = input.shape()[3];
   const std::size_t weight_input_channels = weights.shape()[0];
-  const std::size_t output_channels = weights.shape()[1];
+  const std::size_t output_channels = weights.shape()[1] * groups;
   const std::size_t kernel_height = weights.shape()[2];
   const std::size_t kernel_width = weights.shape()[3];
-  if (weight_input_channels != input_channels || bias.shape()[0] != output_channels ||
-      (input_height - 1) * stride + kernel_height < 2 * padding ||
-      (input_width - 1) * stride + kernel_width < 2 * padding) {
+  if (weight_input_channels != input_channels || input_channels % groups != 0 || bias.shape()[0] != output_channels ||
+      (input_height - 1) * stride_h + kernel_height < 2 * padding_h ||
+      (input_width - 1) * stride_w + kernel_width < 2 * padding_w) {
     throw std::invalid_argument("metal::conv_transpose2d weight shapes do not match input");
   }
-  const std::size_t output_height = (input_height - 1) * stride + kernel_height - 2 * padding;
-  const std::size_t output_width = (input_width - 1) * stride + kernel_width - 2 * padding;
+  const std::size_t output_height = (input_height - 1) * stride_h + kernel_height - 2 * padding_h;
+  const std::size_t output_width = (input_width - 1) * stride_w + kernel_width - 2 * padding_w;
   Tensor output = pool.allocate_tensor(
       {batch, output_channels, output_height, output_width}, DType::Float32);
   id<MTLBuffer> input_buffer = make_input_buffer(impl_->device, input);
@@ -913,8 +918,8 @@ Tensor MetalBackend::conv_transpose2d(
       static_cast<std::uint32_t>(input_height), static_cast<std::uint32_t>(input_width),
       static_cast<std::uint32_t>(output_channels), static_cast<std::uint32_t>(kernel_height),
       static_cast<std::uint32_t>(kernel_width), static_cast<std::uint32_t>(output_height),
-      static_cast<std::uint32_t>(output_width), static_cast<std::uint32_t>(stride),
-      static_cast<std::uint32_t>(padding)};
+      static_cast<std::uint32_t>(output_width), static_cast<std::uint32_t>(stride_h),
+      static_cast<std::uint32_t>(padding_h)};
   id<MTLCommandBuffer> command_buffer = [impl_->queue commandBuffer];
   id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
   [encoder setComputePipelineState:impl_->conv_transpose2d_pipeline];

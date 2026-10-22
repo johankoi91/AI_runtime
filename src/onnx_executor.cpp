@@ -81,6 +81,97 @@ Tensor contiguous_copy(const Tensor& input, MemoryPool& pool) {
   return output;
 }
 
+Tensor batched_matmul(const Tensor& lhs, const Tensor& rhs, MemoryPool& pool) {
+  if (lhs.rank() != 3 || rhs.rank() != 2 || lhs.shape()[2] != rhs.shape()[0]) {
+    throw std::runtime_error("batched MatMul supports [B,T,K] x [K,N]");
+  }
+  Tensor output = pool.allocate_tensor({lhs.shape()[0], lhs.shape()[1], rhs.shape()[1]});
+  for (std::size_t batch = 0; batch < lhs.shape()[0]; ++batch) {
+    for (std::size_t time = 0; time < lhs.shape()[1]; ++time) {
+      for (std::size_t column = 0; column < rhs.shape()[1]; ++column) {
+        float sum = 0.0f;
+        for (std::size_t inner = 0; inner < lhs.shape()[2]; ++inner) {
+          sum += lhs.data<float>()[((batch * lhs.shape()[1] + time) * lhs.shape()[2]) + inner] * rhs.data<float>()[inner * rhs.shape()[1] + column];
+        }
+        output.data<float>()[((batch * output.shape()[1] + time) * output.shape()[2]) + column] = sum;
+      }
+    }
+  }
+  return output;
+}
+
+Tensor broadcast_add(const Tensor& lhs, const Tensor& rhs, MemoryPool& pool) {
+  const std::size_t rank = std::max(lhs.rank(), rhs.rank());
+  Shape output_shape(rank, 1);
+  for (std::size_t index = 0; index < rank; ++index) {
+    const std::size_t lhs_index = index + lhs.rank() >= rank ? index + lhs.rank() - rank : std::numeric_limits<std::size_t>::max();
+    const std::size_t rhs_index = index + rhs.rank() >= rank ? index + rhs.rank() - rank : std::numeric_limits<std::size_t>::max();
+    const std::size_t lhs_value = lhs_index == std::numeric_limits<std::size_t>::max() ? 1 : lhs.shape()[lhs_index];
+    const std::size_t rhs_value = rhs_index == std::numeric_limits<std::size_t>::max() ? 1 : rhs.shape()[rhs_index];
+    if (lhs_value != rhs_value && lhs_value != 1 && rhs_value != 1 &&
+        (lhs_value > rhs_value ? lhs_value - rhs_value : rhs_value - lhs_value) > 1) {
+      throw std::runtime_error("Add broadcast shape mismatch");
+    }
+    output_shape[index] = std::max(lhs_value, rhs_value);
+  }
+  Tensor output = pool.allocate_tensor(output_shape);
+  for (std::size_t linear = 0; linear < output.numel(); ++linear) {
+    std::size_t remaining = linear;
+    std::size_t lhs_offset = 0;
+    std::size_t rhs_offset = 0;
+    for (std::size_t dimension = rank; dimension-- > 0;) {
+      const std::size_t coordinate = remaining % output_shape[dimension];
+      remaining /= output_shape[dimension];
+      if (dimension >= rank - lhs.rank()) {
+        const std::size_t source_dimension = dimension - (rank - lhs.rank());
+        if (lhs.shape()[source_dimension] != 1 && coordinate >= lhs.shape()[source_dimension]) lhs_offset = std::numeric_limits<std::size_t>::max();
+        else if (lhs_offset != std::numeric_limits<std::size_t>::max()) lhs_offset += (lhs.shape()[source_dimension] == 1 ? 0 : coordinate) * lhs.strides()[source_dimension];
+      }
+      if (dimension >= rank - rhs.rank()) {
+        const std::size_t source_dimension = dimension - (rank - rhs.rank());
+        if (rhs.shape()[source_dimension] != 1 && coordinate >= rhs.shape()[source_dimension]) rhs_offset = std::numeric_limits<std::size_t>::max();
+        else if (rhs_offset != std::numeric_limits<std::size_t>::max()) rhs_offset += (rhs.shape()[source_dimension] == 1 ? 0 : coordinate) * rhs.strides()[source_dimension];
+      }
+    }
+    output.data<float>()[linear] = (lhs_offset == std::numeric_limits<std::size_t>::max() ? 0.0f : lhs.data<float>()[lhs_offset]) +
+        (rhs_offset == std::numeric_limits<std::size_t>::max() ? 0.0f : rhs.data<float>()[rhs_offset]);
+  }
+  return output;
+}
+
+Tensor broadcast_mul(const Tensor& lhs, const Tensor& rhs, MemoryPool& pool) {
+  const std::size_t rank = std::max(lhs.rank(), rhs.rank());
+  Shape output_shape(rank, 1);
+  for (std::size_t index = 0; index < rank; ++index) {
+    const std::size_t lhs_index = index + lhs.rank() >= rank ? index + lhs.rank() - rank : std::numeric_limits<std::size_t>::max();
+    const std::size_t rhs_index = index + rhs.rank() >= rank ? index + rhs.rank() - rank : std::numeric_limits<std::size_t>::max();
+    const std::size_t lhs_value = lhs_index == std::numeric_limits<std::size_t>::max() ? 1 : lhs.shape()[lhs_index];
+    const std::size_t rhs_value = rhs_index == std::numeric_limits<std::size_t>::max() ? 1 : rhs.shape()[rhs_index];
+    if (lhs_value != rhs_value && lhs_value != 1 && rhs_value != 1) throw std::runtime_error("Mul broadcast shape mismatch");
+    output_shape[index] = std::max(lhs_value, rhs_value);
+  }
+  Tensor output = pool.allocate_tensor(output_shape);
+  for (std::size_t linear = 0; linear < output.numel(); ++linear) {
+    std::size_t remaining = linear;
+    std::size_t lhs_offset = 0;
+    std::size_t rhs_offset = 0;
+    for (std::size_t dimension = rank; dimension-- > 0;) {
+      const std::size_t coordinate = remaining % output_shape[dimension];
+      remaining /= output_shape[dimension];
+      if (dimension >= rank - lhs.rank()) {
+        const std::size_t source_dimension = dimension - (rank - lhs.rank());
+        lhs_offset += (lhs.shape()[source_dimension] == 1 ? 0 : coordinate) * lhs.strides()[source_dimension];
+      }
+      if (dimension >= rank - rhs.rank()) {
+        const std::size_t source_dimension = dimension - (rank - rhs.rank());
+        rhs_offset += (rhs.shape()[source_dimension] == 1 ? 0 : coordinate) * rhs.strides()[source_dimension];
+      }
+    }
+    output.data<float>()[linear] = lhs.data<float>()[lhs_offset] * rhs.data<float>()[rhs_offset];
+  }
+  return output;
+}
+
 Tensor pad_tensor(const Tensor& input, const std::vector<std::int64_t>& pads, float value, MemoryPool& pool) {
   if ((pads.size() < input.rank() * 2 || pads.size() % 2 != 0) || !input.is_contiguous()) {
     throw std::runtime_error("ONNX Pad requires compatible rank and pads");
@@ -182,13 +273,18 @@ Tensor run_gru_step(const Backend& backend, const OnnxNode& node,
   const Tensor& sequence = lookup(tensors, node.inputs[0]);
   const Tensor& input_weights = lookup(tensors, node.inputs[1]);
   const Tensor& hidden_weights = lookup(tensors, node.inputs[2]);
-  const Tensor& biases = lookup(tensors, node.inputs[3]);
-  const Tensor& initial_hidden = lookup(tensors, node.inputs[4]);
-  if (sequence.rank() != 3 || sequence.shape()[0] != 1 || sequence.shape()[1] != 1 ||
+  const std::size_t hidden_size_hint = lookup(tensors, node.inputs[2]).shape()[1] / 3;
+  Tensor default_bias = Tensor::zeros({1, 6 * hidden_size_hint});
+  Tensor default_hidden = Tensor::zeros({1, 1, hidden_size_hint});
+  const Tensor& biases = node.inputs[3].empty() ? default_bias : lookup(tensors, node.inputs[3]);
+  const Tensor& initial_hidden = node.inputs[4].empty() ? default_hidden : lookup(tensors, node.inputs[4]);
+  if (sequence.rank() != 3 || sequence.shape()[1] != 1 ||
       input_weights.rank() != 3 || hidden_weights.rank() != 3 || biases.rank() != 2 ||
       initial_hidden.rank() != 3 || input_weights.shape()[0] != 1 || hidden_weights.shape()[0] != 1 ||
       biases.shape()[0] != 1 || initial_hidden.shape()[0] != 1 || initial_hidden.shape()[1] != 1) {
-    throw std::runtime_error("stage 15 GRU only supports one direction and one input step");
+    throw std::runtime_error("GRU unsupported shapes sequence=" + sequence.debug_string() +
+                             " W=" + input_weights.debug_string() + " R=" + hidden_weights.debug_string() +
+                             " B=" + biases.debug_string() + " H=" + initial_hidden.debug_string());
   }
   const std::size_t hidden_size = hidden_weights.shape()[1] / 3;
   const std::size_t input_size = input_weights.shape()[2];
@@ -202,8 +298,6 @@ Tensor run_gru_step(const Backend& backend, const OnnxNode& node,
   for (std::size_t index = 0; index < bias_values.size(); ++index) {
     bias_values[index] = biases.data<float>()[index] + biases.data<float>()[3 * hidden_size + index];
   }
-  Tensor input = Tensor::from_vector({input_size}, std::vector<float>(
-      sequence.data<float>(), sequence.data<float>() + input_size));
   Tensor hidden = Tensor::from_vector({hidden_size}, std::vector<float>(
       initial_hidden.data<float>(), initial_hidden.data<float>() + hidden_size));
   Tensor weights = Tensor::from_vector({3 * hidden_size, input_size}, std::vector<float>(
@@ -211,9 +305,18 @@ Tensor run_gru_step(const Backend& backend, const OnnxNode& node,
   Tensor recurrent = Tensor::from_vector({3 * hidden_size, hidden_size}, std::vector<float>(
       hidden_weights.data<float>(), hidden_weights.data<float>() + 3 * hidden_size * hidden_size));
   Tensor bias = Tensor::from_vector({3 * hidden_size}, bias_values);
-  Tensor step = backend.gru_step(input, hidden, weights, recurrent, bias, pool);
-  return Tensor::from_vector({1, 1, hidden_size}, std::vector<float>(
-      step.data<float>(), step.data<float>() + hidden_size));
+  const std::size_t time_steps = sequence.shape()[0];
+  Tensor output = pool.allocate_tensor({time_steps, 1, 1, hidden_size});
+  for (std::size_t time = 0; time < time_steps; ++time) {
+    std::vector<float> input_values(input_size);
+    std::copy_n(sequence.data<float>() + time * input_size, input_size, input_values.data());
+    Tensor input = Tensor::from_vector({input_size}, input_values);
+    Tensor step = backend.gru_step(input, hidden, weights, recurrent, bias, pool);
+    std::copy_n(step.data<float>(), hidden_size, output.data<float>() + time * hidden_size);
+    hidden = Tensor::from_vector({hidden_size}, std::vector<float>(
+        step.data<float>(), step.data<float>() + hidden_size));
+  }
+  return output;
 }
 
 }  // namespace
@@ -222,10 +325,10 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
     const OnnxGraph& graph, const std::unordered_map<std::string, Tensor>& inputs, MemoryPool& pool) const {
   std::unordered_map<std::string, Tensor> tensors = inputs;
   for (const WeightTensor& initializer : graph.initializers) {
-    tensors.emplace(initializer.name, Tensor::from_vector(initializer.shape, initializer.values));
+    tensors[initializer.name] = Tensor::from_vector(initializer.shape, initializer.values);
   }
   for (const OnnxNode& node : graph.nodes) {
-    if (node.outputs.size() != 1) throw std::runtime_error("ONNX node must have one output: " + node.name);
+    if (node.outputs.empty() || node.outputs.size() > 2) throw std::runtime_error("ONNX node output count unsupported: " + node.name);
     Tensor output;
     if (node.op_type == "Add" || node.op_type == "Mul" || node.op_type == "MatMul") {
       if (node.inputs.size() != 2) throw std::runtime_error("binary ONNX node requires two inputs");
@@ -235,9 +338,14 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
         std::cerr << "[add] " << node.name << " lhs=" << lhs.debug_string()
                   << " rhs=" << rhs.debug_string() << "\n";
       }
-      output = node.op_type == "Add" ? backend_.add(lhs, rhs, pool)
-          : node.op_type == "Mul" ? backend_.mul(lhs, rhs, pool)
-          : backend_.matmul(lhs, rhs, pool);
+      if (node.op_type == "Add") {
+        output = lhs.shape() == rhs.shape() ? backend_.add(lhs, rhs, pool) : broadcast_add(lhs, rhs, pool);
+      }
+      else if (node.op_type == "Mul") {
+        output = lhs.shape() == rhs.shape() ? backend_.mul(lhs, rhs, pool) : broadcast_mul(lhs, rhs, pool);
+      }
+      else if (lhs.rank() == 3) output = batched_matmul(lhs, rhs, pool);
+      else output = backend_.matmul(lhs, rhs, pool);
     } else if (node.op_type == "Relu" || node.op_type == "Sigmoid" || node.op_type == "Tanh") {
       if (node.inputs.size() != 1) throw std::runtime_error("activation node requires one input");
       const Tensor& input = lookup(tensors, node.inputs[0]);
@@ -264,16 +372,16 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
             " pad=" + std::to_string(pads[0]) + "," + std::to_string(pads[1]) + "," +
             std::to_string(pads[2]) + "," + std::to_string(pads[3]));
       }
-      if (pads[0] != pads[2] || pads[1] != pads[3]) {
-        const std::vector<std::int64_t> full_pads = {
-            0, 0, pads[0], pads[1], 0, 0, pads[2], pads[3]};
-        input = pad_tensor(input, full_pads, 0.0f, pool);
+      if (pads[0] != pads[2] || pads[1] != pads[3]) throw std::runtime_error("asymmetric Conv padding is unsupported");
+      try {
+        output = backend_.conv2d(input, weights, bias, static_cast<std::size_t>(strides[0]),
+                                 static_cast<std::size_t>(strides[1]), static_cast<std::size_t>(pads[0]),
+                                 static_cast<std::size_t>(pads[1]), static_cast<std::size_t>(groups[0]), pool);
+      } catch (const std::exception& error) {
+        throw std::runtime_error("Conv node " + node.name + " weight=" + node.inputs[1] +
+                                 " input_count=" + std::to_string(node.inputs.size()) +
+                                 " " + weights.debug_string() + ": " + error.what());
       }
-      const std::size_t symmetric_padding = pads[0] == pads[2] && pads[1] == pads[3]
-          ? static_cast<std::size_t>(pads[0]) : 0;
-      output = backend_.conv2d(input, weights, bias, static_cast<std::size_t>(strides[0]),
-                               static_cast<std::size_t>(strides[1]),
-                               symmetric_padding, static_cast<std::size_t>(groups[0]), pool);
     } else if (node.op_type == "ConvTranspose") {
       if (node.inputs.size() < 2 || node.inputs.size() > 3) {
         throw std::runtime_error("ConvTranspose input count unsupported");
@@ -287,16 +395,29 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
       const auto pads = attribute_values(graph, node, "pads", {0, 0, 0, 0});
       const auto dilations = attribute_values(graph, node, "dilations", {1, 1});
       const auto groups = attribute_values(graph, node, "group", {1});
+      const std::size_t deconv_output_channels = weights.shape()[1] * static_cast<std::size_t>(groups[0]);
+      if (bias.numel() == 1 && deconv_output_channels > 1) {
+        const float value = bias.data<float>()[0];
+        bias = Tensor::from_vector({deconv_output_channels}, std::vector<float>(deconv_output_channels, value));
+      }
       if (strides.size() != 2 || pads.size() != 4 || dilations.size() != 2 || groups.size() != 1 ||
           strides[0] <= 0 || strides[1] <= 0 || pads[0] < 0 || pads[1] < 0 ||
-          pads[2] < 0 || pads[3] < 0 || dilations[0] != 1 || dilations[1] != 1 || groups[0] != 1 ||
-          pads[0] != pads[2] || pads[1] != pads[3] || strides[0] != strides[1]) {
-        throw std::runtime_error(
-            "ONNX ConvTranspose attributes are outside the supported 2D symmetric subset");
+          pads[2] < 0 || pads[3] < 0 || dilations[0] != 1 || dilations[1] != 1 ||
+          pads[0] != pads[2] || pads[1] != pads[3]) {
+        throw std::runtime_error("ONNX ConvTranspose attributes unsupported strides=" +
+            std::to_string(strides[0]) + "," + std::to_string(strides[1]) + " pads=" +
+            std::to_string(pads[0]) + "," + std::to_string(pads[1]) + "," +
+            std::to_string(pads[2]) + "," + std::to_string(pads[3]) + " group=" +
+            std::to_string(groups[0]));
       }
       output = backend_.conv_transpose2d(
           input, weights, bias, static_cast<std::size_t>(strides[0]),
-          static_cast<std::size_t>(pads[0]), pool);
+          static_cast<std::size_t>(strides[1]), static_cast<std::size_t>(pads[0]),
+          static_cast<std::size_t>(pads[1]), static_cast<std::size_t>(groups[0]), pool);
+      if (node.outputs.size() == 1) {
+        const std::string& output_name = node.outputs[0];
+        (void)output_name;
+      }
     } else if (node.op_type == "GRU") {
       output = run_gru_step(backend_, node, tensors, pool);
     } else if (node.op_type == "Reshape") {
@@ -358,6 +479,11 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
         }
       } catch (const std::out_of_range&) {
         for (std::size_t index = lookup(tensors, node.inputs[0]).rank(); index-- > 0;) permutation.push_back(index);
+      }
+      if (permutation.size() != lookup(tensors, node.inputs[0]).rank()) {
+        throw std::runtime_error("Transpose node " + node.name + " input=" + node.inputs[0] +
+                                 " " + lookup(tensors, node.inputs[0]).debug_string() +
+                                 " perm_size=" + std::to_string(permutation.size()));
       }
       output = cpu::transpose(lookup(tensors, node.inputs[0]), permutation, &pool);
     } else if (node.op_type == "Concat") {
@@ -536,7 +662,18 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
     } else {
       throw std::runtime_error("unsupported ONNX op in stage 15: " + node.op_type);
     }
-    tensors[node.outputs[0]] = std::move(output);
+    tensors[node.outputs[0]] = output;
+    if (node.outputs.size() == 2 && node.op_type == "GRU") {
+      if (output.rank() == 4) {
+        const std::size_t hidden_size = output.shape()[3];
+        Tensor final_hidden = pool.allocate_tensor({1, 1, hidden_size});
+        std::copy_n(output.data<float>() + (output.shape()[0] - 1) * hidden_size,
+                    hidden_size, final_hidden.data<float>());
+        tensors[node.outputs[1]] = std::move(final_hidden);
+      } else {
+        tensors[node.outputs[1]] = output;
+      }
+    }
     if (std::getenv("HUSH_DEBUG_SHAPES") != nullptr) {
       std::cerr << "[shape] " << node.name << " " << node.op_type << " -> "
                 << tensors[node.outputs[0]].debug_string() << "\n";

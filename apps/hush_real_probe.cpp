@@ -1,11 +1,13 @@
 #include <cstdlib>
 #include <iostream>
 #include <vector>
+#include <memory>
 
 #include "runtime/cpu_backend.h"
 #include "runtime/hush_frontend.h"
 #include "runtime/hush_model.h"
 #include "runtime/hush_session.h"
+#include "runtime/metal_backend.h"
 
 int main() {
   const char* path = std::getenv("HUSH_MODEL_BUNDLE");
@@ -15,9 +17,35 @@ int main() {
   }
   try {
     const runtime::HushModel model = runtime::HushModel::load(path);
+    for (const auto& node : model.erb_decoder.nodes) {
+      if (node.name.find("df_convp") != std::string::npos) {
+        std::cerr << "TARGET inputs=";
+        for (const auto& input : node.inputs) std::cerr << '[' << input << ']';
+        std::cerr << "\n";
+      }
+    }
+    for (const auto& node : model.erb_decoder.nodes) {
+      if (node.name.find("df_convp") != std::string::npos) {
+        std::cerr << "decoder_node " << node.name << " inputs=";
+        for (const auto& input : node.inputs) std::cerr << input << ',';
+        std::cerr << "\n";
+      }
+    }
     for (const auto& initializer : model.encoder.initializers) {
       if (initializer.name.find("df_fc_emb.0.weight") != std::string::npos) {
         std::cout << "weight " << initializer.name << " shape=";
+        for (auto dimension : initializer.shape) std::cout << dimension << ',';
+        std::cout << "\n";
+      }
+    }
+    for (const auto& initializer : model.erb_decoder.initializers) {
+      if (initializer.name.find("onnx::Conv_314") != std::string::npos) {
+        std::cout << "erb_weight " << initializer.name << " shape=";
+        for (auto dimension : initializer.shape) std::cout << dimension << ',';
+        std::cout << "\n";
+      }
+      if (initializer.name.find("Conv") != std::string::npos) {
+        std::cout << "erb_init " << initializer.name << " shape=";
         for (auto dimension : initializer.shape) std::cout << dimension << ',';
         std::cout << "\n";
       }
@@ -60,9 +88,36 @@ int main() {
         for (const auto& output : node.outputs) std::cout << output << ',';
         std::cout << "\n";
       }
+      if (node.name.find("emb_gru/gru") != std::string::npos) {
+        std::cout << "gru node " << node.name << " op=" << node.op_type << " inputs=";
+        for (const auto& input : node.inputs) std::cout << input << ',';
+        std::cout << " outputs=";
+        for (const auto& output : node.outputs) std::cout << output << ',';
+        std::cout << "\n";
+      }
     }
-    runtime::CPUBackend backend;
-    runtime::HushStreamSession session(model, backend, {});
+    for (const auto& node : model.erb_decoder.nodes) {
+      if (node.name.find("df_convp") != std::string::npos) {
+        std::cout << "decoder node " << node.name << " inputs=";
+        for (const auto& input : node.inputs) std::cout << input << ',';
+        std::cout << "\n";
+      }
+    }
+    for (const auto& node : model.erb_decoder.nodes) {
+      if (node.name.find("df_convp") != std::string::npos) {
+        std::cout << "decoder node " << node.name << " inputs=";
+        for (const auto& input : node.inputs) std::cout << input << ',';
+        std::cout << "\n";
+      }
+    }
+    std::unique_ptr<runtime::Backend> backend;
+    if (const char* backend_name = std::getenv("HUSH_BACKEND"); backend_name != nullptr &&
+        std::string(backend_name) == "metal") {
+      backend = std::make_unique<runtime::MetalBackend>();
+    } else {
+      backend = std::make_unique<runtime::CPUBackend>();
+    }
+    runtime::HushStreamSession session(model, *backend, {});
     runtime::MemoryPool pool;
     runtime::HushFrontend frontend(model.config);
     std::vector<runtime::Tensor> erb_frames;
@@ -89,6 +144,21 @@ int main() {
     for (const auto& output : outputs) {
       std::cout << output.first << "=" << output.second.debug_string() << "\n";
     }
+    const auto decoder_outputs = session.process_decoders(outputs, {}, {}, pool);
+    std::cout << "erb_decoder_outputs=" << decoder_outputs.erb.size()
+              << " df_decoder_outputs=" << decoder_outputs.df.size() << "\n";
+    for (const auto& output : decoder_outputs.erb) {
+      std::cout << "erb:" << output.first << "=" << output.second.debug_string() << "\n";
+    }
+    for (const auto& output : decoder_outputs.df) {
+      std::cout << "df:" << output.first << "=" << output.second.debug_string() << "\n";
+    }
+    runtime::MemoryPool audio_pool;
+    const runtime::AudioFrame enhanced = session.process_audio(
+        runtime::AudioFrame::mono_16k(std::vector<float>(160, 0.0f)),
+        "feat_erb", "feat_spec", "m", *backend, audio_pool);
+    std::cout << "enhanced_samples=" << enhanced.sample_count()
+              << " first=" << enhanced.samples().front() << "\n";
     return 0;
   } catch (const std::exception& error) {
     std::cerr << "real Hush probe failed: " << error.what() << "\n";

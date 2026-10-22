@@ -53,20 +53,24 @@ Tensor CPUBackend::conv2d(
     const Tensor& bias,
     std::size_t stride_h,
     std::size_t stride_w,
-    std::size_t padding,
+    std::size_t padding_h,
+    std::size_t padding_w,
     std::size_t groups,
     MemoryPool& pool) const {
-  return cpu::conv2d(input, weights, bias, stride_h, stride_w, padding, groups, &pool);
+  return cpu::conv2d(input, weights, bias, stride_h, stride_w, padding_h, padding_w, groups, &pool);
 }
 
 Tensor CPUBackend::conv_transpose2d(
     const Tensor& input,
     const Tensor& weights,
     const Tensor& bias,
-    std::size_t stride,
-    std::size_t padding,
+    std::size_t stride_h,
+    std::size_t stride_w,
+    std::size_t padding_h,
+    std::size_t padding_w,
+    std::size_t groups,
     MemoryPool& pool) const {
-  return cpu::conv_transpose2d(input, weights, bias, stride, padding, &pool);
+  return cpu::conv_transpose2d(input, weights, bias, stride_h, stride_w, padding_h, padding_w, groups, &pool);
 }
 
 Tensor CPUBackend::stft(
