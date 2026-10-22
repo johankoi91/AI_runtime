@@ -88,6 +88,10 @@ add_executable(hush_wav_demo apps/hush_wav_demo.cpp)
 target_link_libraries(hush_wav_demo PRIVATE mini_runtime)
 set_target_properties(hush_wav_demo PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
 
+add_executable(hush_quality apps/hush_quality.cpp)
+target_link_libraries(hush_quality PRIVATE mini_runtime)
+set_target_properties(hush_quality PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
+
 add_executable(hush_inspect apps/hush_inspect.cpp)
 target_link_libraries(hush_inspect PRIVATE mini_runtime)
 set_target_properties(hush_inspect PROPERTIES
