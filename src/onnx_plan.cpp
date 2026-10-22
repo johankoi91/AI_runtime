@@ -47,6 +47,20 @@ OnnxExecutionPlan OnnxExecutionPlan::compile(const OnnxGraph& graph) {
       else ++found->second;
     }
   }
+  std::unordered_map<std::string, std::size_t> remaining;
+  for (const auto& item : plan.value_users_) remaining[item.first] = item.second;
+  std::size_t live = 0;
+  for (const PlannedNode& planned : plan.nodes_) {
+    const OnnxNode& node = graph.nodes[planned.graph_index];
+    for (const std::string& input : node.inputs) {
+      auto found = remaining.find(input);
+      if (found != remaining.end() && found->second > 0 && --found->second == 0) --live;
+    }
+    for (const std::string& output : node.outputs) {
+      if (remaining.find(output) != remaining.end()) ++live;
+    }
+    plan.peak_live_values_ = std::max(plan.peak_live_values_, live);
+  }
   return plan;
 }
 

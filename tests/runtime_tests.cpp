@@ -535,6 +535,7 @@ void test_onnx_execution_plan(TestContext& ctx) {
   ctx.expect_true(plan.nodes()[0].graph_index == 1 && plan.nodes()[1].graph_index == 0,
                   "execution plan should topologically order nodes");
   ctx.expect_true(plan.output_users("a") == 1, "execution plan should count value users");
+  ctx.expect_true(plan.peak_live_values() > 0, "execution plan should report live values");
 }
 
 void test_onnx_connection_ops(TestContext& ctx) {
