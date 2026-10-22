@@ -517,6 +517,30 @@ void test_onnx_shape_constant(TestContext& ctx) {
                    "Constant should return tensor attribute values");
 }
 
+void test_onnx_connection_ops(TestContext& ctx) {
+  runtime::OnnxGraph graph;
+  graph.initializers = {
+      {.name = "axes", .shape = {1}, .values = {1.0f}},
+      {.name = "indices", .shape = {2}, .values = {1.0f, 0.0f}},
+      {.name = "pads", .shape = {4}, .values = {1.0f, 1.0f, 1.0f, 1.0f}},
+  };
+  graph.nodes = {
+      {.name = "unsqueeze", .op_type = "Unsqueeze", .inputs = {"x", "axes"}, .outputs = {"u"}},
+      {.name = "squeeze", .op_type = "Squeeze", .inputs = {"u", "axes"}, .outputs = {"s"}},
+      {.name = "gather", .op_type = "Gather", .inputs = {"s", "indices"}, .outputs = {"g"}},
+      {.name = "pad", .op_type = "Pad", .inputs = {"g", "pads"}, .outputs = {"p"}},
+  };
+  runtime::CPUBackend backend;
+  runtime::OnnxExecutor executor(backend);
+  runtime::MemoryPool pool;
+  const auto outputs = executor.run(
+      graph, {{"x", runtime::Tensor::from_vector({2, 2}, {1.0f, 2.0f, 3.0f, 4.0f})}}, pool);
+  ctx.expect_true(outputs.at("u").shape() == runtime::Shape({2, 1, 2}), "Unsqueeze should add a unit dimension");
+  ctx.expect_true(outputs.at("s").shape() == runtime::Shape({2, 2}), "Squeeze should remove a unit dimension");
+  ctx.expect_close(outputs.at("g").data<float>()[0], 3.0f, 1e-6f, "Gather should reorder rows");
+  ctx.expect_true(outputs.at("p").shape() == runtime::Shape({4, 4}), "Pad should expand both dimensions");
+}
+
 void test_shape_kernels(TestContext& ctx) {
   const runtime::Tensor input = runtime::Tensor::from_vector(
       {2, 3}, {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f});
@@ -788,6 +812,7 @@ int main() {
       {"onnx_conv_attributes", test_onnx_conv_attributes},
       {"onnx_conv_transpose", test_onnx_conv_transpose},
       {"onnx_shape_constant", test_onnx_shape_constant},
+      {"onnx_connection_ops", test_onnx_connection_ops},
       {"hush_frontend", test_hush_frontend},
       {"erb_mask", test_erb_mask},
       {"backend_istft", test_backend_istft},

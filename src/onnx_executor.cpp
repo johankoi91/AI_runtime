@@ -1,6 +1,7 @@
 #include "runtime/onnx_executor.h"
 
 #include <numeric>
+#include <algorithm>
 #include <stdexcept>
 
 #include "runtime/kernels.h"
@@ -41,6 +42,48 @@ std::vector<std::int64_t> attribute_values(
   } catch (const std::out_of_range&) {
     return fallback;
   }
+}
+
+std::vector<std::int64_t> tensor_ints(const Tensor& tensor) {
+  if (tensor.dtype() != DType::Float32 || !tensor.is_contiguous()) {
+    throw std::runtime_error("ONNX shape input must be contiguous float32");
+  }
+  std::vector<std::int64_t> values;
+  for (std::size_t index = 0; index < tensor.numel(); ++index) {
+    values.push_back(static_cast<std::int64_t>(tensor.data<float>()[index]));
+  }
+  return values;
+}
+
+Tensor copy_with_shape(const Tensor& input, const Shape& shape) {
+  if (product(shape) != input.numel()) throw std::runtime_error("ONNX shape element count mismatch");
+  return cpu::reshape(input, shape);
+}
+
+Tensor pad_tensor(const Tensor& input, const std::vector<std::int64_t>& pads, float value, MemoryPool& pool) {
+  if (pads.size() != input.rank() * 2 || !input.is_contiguous()) {
+    throw std::runtime_error("ONNX Pad requires one before and after pad per dimension");
+  }
+  Shape output_shape(input.shape());
+  for (std::size_t index = 0; index < input.rank(); ++index) {
+    if (pads[index] < 0 || pads[index + input.rank()] < 0) throw std::runtime_error("negative Pad is unsupported");
+    output_shape[index] += static_cast<std::size_t>(pads[index] + pads[index + input.rank()]);
+  }
+  Tensor output = pool.allocate_tensor(output_shape);
+  output.fill(value);
+  std::vector<std::size_t> index(input.rank());
+  for (std::size_t linear = 0; linear < input.numel(); ++linear) {
+    std::size_t remaining = linear;
+    std::size_t destination = 0;
+    for (std::size_t dimension = input.rank(); dimension-- > 0;) {
+      index[dimension] = remaining % input.shape()[dimension];
+      remaining /= input.shape()[dimension];
+      const std::size_t coordinate = index[dimension] + static_cast<std::size_t>(pads[dimension]);
+      destination = coordinate + destination * output_shape[dimension];
+    }
+    output.data<float>()[destination] = input.data<float>()[linear];
+  }
+  return output;
 }
 
 Tensor run_gru_step(const Backend& backend, const OnnxNode& node,
@@ -194,6 +237,56 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
       const auto& value = graph.attribute(node, "value");
       if (!value.has_tensor) throw std::runtime_error("Constant requires a tensor value attribute");
       output = Tensor::from_vector(value.tensor.shape, value.tensor.values);
+    } else if (node.op_type == "Cast") {
+      if (node.inputs.size() != 1) throw std::runtime_error("Cast requires one input");
+      const auto& attribute = graph.attribute(node, "to");
+      if (attribute.integer != 1) throw std::runtime_error("only float32 Cast is supported");
+      output = lookup(tensors, node.inputs[0]);
+    } else if (node.op_type == "Unsqueeze") {
+      const Tensor& input = lookup(tensors, node.inputs[0]);
+      const std::vector<std::int64_t> axes = node.inputs.size() > 1
+          ? tensor_ints(lookup(tensors, node.inputs[1]))
+          : attribute_values(graph, node, "axes", {});
+      Shape shape = input.shape();
+      for (std::int64_t axis : axes) {
+        if (axis < 0 || static_cast<std::size_t>(axis) > shape.size()) throw std::runtime_error("Unsqueeze axis is invalid");
+        shape.insert(shape.begin() + axis, 1);
+      }
+      output = copy_with_shape(input, shape);
+    } else if (node.op_type == "Squeeze") {
+      const Tensor& input = lookup(tensors, node.inputs[0]);
+      const std::vector<std::int64_t> axes = node.inputs.size() > 1
+          ? tensor_ints(lookup(tensors, node.inputs[1]))
+          : attribute_values(graph, node, "axes", {});
+      Shape shape;
+      for (std::size_t dimension = 0; dimension < input.rank(); ++dimension) {
+        const bool remove = std::find(axes.begin(), axes.end(), static_cast<std::int64_t>(dimension)) != axes.end();
+        if (remove && input.shape()[dimension] != 1) throw std::runtime_error("Squeeze axis is not one");
+        if (!remove) shape.push_back(input.shape()[dimension]);
+      }
+      output = copy_with_shape(input, shape);
+    } else if (node.op_type == "Gather") {
+      if (node.inputs.size() != 2) throw std::runtime_error("Gather requires data and indices");
+      const Tensor& input = lookup(tensors, node.inputs[0]);
+      const auto indices = tensor_ints(lookup(tensors, node.inputs[1]));
+      const std::size_t axis = attribute_size(graph, node, "axis", 0);
+      if (axis >= input.rank() || axis != 0) throw std::runtime_error("Gather currently supports axis 0 only");
+      const std::size_t block = input.numel() / input.shape()[0];
+      Tensor gathered = pool.allocate_tensor({indices.size(), block});
+      for (std::size_t index = 0; index < indices.size(); ++index) {
+        if (indices[index] < 0 || static_cast<std::size_t>(indices[index]) >= input.shape()[0]) throw std::runtime_error("Gather index out of range");
+        std::copy_n(input.data<float>() + static_cast<std::size_t>(indices[index]) * block,
+                    block, gathered.data<float>() + index * block);
+      }
+      Shape shape = input.shape();
+      shape[0] = indices.size();
+      output = copy_with_shape(gathered, shape);
+    } else if (node.op_type == "Pad") {
+      if (node.inputs.size() < 2 || node.inputs.size() > 3) throw std::runtime_error("Pad input count unsupported");
+      const auto pads = tensor_ints(lookup(tensors, node.inputs[1]));
+      float value = 0.0f;
+      if (node.inputs.size() == 3) value = lookup(tensors, node.inputs[2]).data<float>()[0];
+      output = pad_tensor(lookup(tensors, node.inputs[0]), pads, value, pool);
     } else {
       throw std::runtime_error("unsupported ONNX op in stage 15: " + node.op_type);
     }
