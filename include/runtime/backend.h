@@ -25,6 +25,7 @@ class Backend {
 
   virtual std::string_view name() const = 0;
   virtual Tensor add(const Tensor& lhs, const Tensor& rhs, MemoryPool& pool) const = 0;
+  virtual Tensor mul(const Tensor& lhs, const Tensor& rhs, MemoryPool& pool) const = 0;
   virtual Tensor matmul(
       const Tensor& lhs,
       const Tensor& rhs,

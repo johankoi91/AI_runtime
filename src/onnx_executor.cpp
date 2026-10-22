@@ -94,11 +94,13 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
   for (const OnnxNode& node : graph.nodes) {
     if (node.outputs.size() != 1) throw std::runtime_error("ONNX node must have one output: " + node.name);
     Tensor output;
-    if (node.op_type == "Add" || node.op_type == "MatMul") {
+    if (node.op_type == "Add" || node.op_type == "Mul" || node.op_type == "MatMul") {
       if (node.inputs.size() != 2) throw std::runtime_error("binary ONNX node requires two inputs");
       const Tensor& lhs = lookup(tensors, node.inputs[0]);
       const Tensor& rhs = lookup(tensors, node.inputs[1]);
-      output = node.op_type == "Add" ? backend_.add(lhs, rhs, pool) : backend_.matmul(lhs, rhs, pool);
+      output = node.op_type == "Add" ? backend_.add(lhs, rhs, pool)
+          : node.op_type == "Mul" ? backend_.mul(lhs, rhs, pool)
+          : backend_.matmul(lhs, rhs, pool);
     } else if (node.op_type == "Relu" || node.op_type == "Sigmoid" || node.op_type == "Tanh") {
       if (node.inputs.size() != 1) throw std::runtime_error("activation node requires one input");
       const Tensor& input = lookup(tensors, node.inputs[0]);

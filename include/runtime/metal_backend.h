@@ -17,6 +17,7 @@ class MetalBackend final : public Backend {
 
   std::string_view name() const override;
   Tensor add(const Tensor& lhs, const Tensor& rhs, MemoryPool& pool) const override;
+  Tensor mul(const Tensor& lhs, const Tensor& rhs, MemoryPool& pool) const override;
   Tensor matmul(
       const Tensor& lhs,
       const Tensor& rhs,

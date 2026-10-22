@@ -51,6 +51,16 @@ int main() {
             << output[2] << ", " << output[3] << "]\n";
   std::cout << "Metal GPU test passed\n";
 
+  runtime::Tensor gpu_mul = backend.mul(
+      runtime::Tensor::from_vector({2}, {2.0f, -3.0f}),
+      runtime::Tensor::from_vector({2}, {4.0f, -2.0f}), pool);
+  if (std::fabs(gpu_mul.data<float>()[0] - 8.0f) > 1e-6f ||
+      std::fabs(gpu_mul.data<float>()[1] - 6.0f) > 1e-6f) {
+    std::cerr << "Metal mul test failed\n";
+    return 1;
+  }
+  std::cout << "Metal mul test passed\n";
+
   std::vector<float> waveform(640);
   for (std::size_t index = 0; index < waveform.size(); ++index) {
     waveform[index] = 0.4f * std::sin(static_cast<float>(index) * 0.17f);

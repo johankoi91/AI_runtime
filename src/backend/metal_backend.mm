@@ -33,6 +33,15 @@ kernel void add_kernel(
   }
 }
 
+kernel void mul_kernel(
+    device const float* lhs [[buffer(0)]],
+    device const float* rhs [[buffer(1)]],
+    device float* out [[buffer(2)]],
+    constant uint& count [[buffer(3)]],
+    uint index [[thread_position_in_grid]]) {
+  if (index < count) out[index] = lhs[index] * rhs[index];
+}
+
 kernel void matmul_kernel(
     device const float* lhs [[buffer(0)]],
     device const float* rhs [[buffer(1)]],
@@ -306,6 +315,7 @@ struct MetalBackend::Impl {
   id<MTLDevice> device = nil;
   id<MTLCommandQueue> queue = nil;
   id<MTLComputePipelineState> add_pipeline = nil;
+  id<MTLComputePipelineState> mul_pipeline = nil;
   id<MTLComputePipelineState> matmul_pipeline = nil;
   id<MTLComputePipelineState> stft_pipeline = nil;
   id<MTLComputePipelineState> sigmoid_pipeline = nil;
@@ -340,6 +350,7 @@ MetalBackend::MetalBackend() : impl_(std::make_unique<Impl>()) {
   }
 
   id<MTLFunction> add_function = [library newFunctionWithName:@"add_kernel"];
+  id<MTLFunction> mul_function = [library newFunctionWithName:@"mul_kernel"];
   id<MTLFunction> matmul_function = [library newFunctionWithName:@"matmul_kernel"];
   id<MTLFunction> stft_function = [library newFunctionWithName:@"stft_kernel"];
   id<MTLFunction> sigmoid_function = [library newFunctionWithName:@"sigmoid_kernel"];
@@ -354,6 +365,10 @@ MetalBackend::MetalBackend() : impl_(std::make_unique<Impl>()) {
   impl_->add_pipeline = [impl_->device newComputePipelineStateWithFunction:add_function error:&error];
   if (impl_->add_pipeline == nil) {
     throw std::runtime_error("MetalBackend: failed to create add pipeline");
+  }
+  impl_->mul_pipeline = [impl_->device newComputePipelineStateWithFunction:mul_function error:&error];
+  if (impl_->mul_pipeline == nil) {
+    throw std::runtime_error("MetalBackend: failed to create mul pipeline");
   }
   impl_->matmul_pipeline =
       [impl_->device newComputePipelineStateWithFunction:matmul_function error:&error];
@@ -476,6 +491,34 @@ Tensor MetalBackend::add(const Tensor& lhs, const Tensor& rhs, MemoryPool& pool)
   if (impl_->trace != nullptr) {
     impl_->trace->emit("metal", "copy_back_completed", "add output to Tensor", output.nbytes());
   }
+  return output;
+}
+
+Tensor MetalBackend::mul(const Tensor& lhs, const Tensor& rhs, MemoryPool& pool) const {
+  if (lhs.dtype() != DType::Float32 || rhs.dtype() != DType::Float32 ||
+      lhs.shape() != rhs.shape() || !lhs.is_contiguous() || !rhs.is_contiguous()) {
+    throw std::invalid_argument("metal::mul requires matching contiguous float32 tensors");
+  }
+  Tensor output = pool.allocate_tensor(lhs.shape(), lhs.dtype());
+  id<MTLBuffer> lhs_buffer = make_input_buffer(impl_->device, lhs);
+  id<MTLBuffer> rhs_buffer = make_input_buffer(impl_->device, rhs);
+  id<MTLBuffer> output_buffer =
+      [impl_->device newBufferWithLength:output.nbytes() options:MTLResourceStorageModeShared];
+  const uint32_t count = static_cast<uint32_t>(lhs.numel());
+  id<MTLCommandBuffer> command_buffer = [impl_->queue commandBuffer];
+  id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
+  [encoder setComputePipelineState:impl_->mul_pipeline];
+  [encoder setBuffer:lhs_buffer offset:0 atIndex:0];
+  [encoder setBuffer:rhs_buffer offset:0 atIndex:1];
+  [encoder setBuffer:output_buffer offset:0 atIndex:2];
+  [encoder setBytes:&count length:sizeof(count) atIndex:3];
+  const NSUInteger threads = std::min<NSUInteger>(impl_->mul_pipeline.maxTotalThreadsPerThreadgroup, 256);
+  [encoder dispatchThreads:MTLSizeMake(count, 1, 1)
+      threadsPerThreadgroup:MTLSizeMake(threads, 1, 1)];
+  [encoder endEncoding];
+  [command_buffer commit];
+  check_status(command_buffer, "metal::mul");
+  copy_output(output_buffer, output);
   return output;
 }
 

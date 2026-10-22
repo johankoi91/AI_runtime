@@ -17,6 +17,10 @@ Tensor CPUBackend::add(const Tensor& lhs, const Tensor& rhs, MemoryPool& pool) c
   return cpu::add(lhs, rhs, &pool);
 }
 
+Tensor CPUBackend::mul(const Tensor& lhs, const Tensor& rhs, MemoryPool& pool) const {
+  return cpu::mul(lhs, rhs, &pool);
+}
+
 Tensor CPUBackend::matmul(
     const Tensor& lhs,
     const Tensor& rhs,

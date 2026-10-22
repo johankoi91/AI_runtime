@@ -11,6 +11,7 @@ class CPUBackend final : public Backend {
  public:
   std::string_view name() const override;
   Tensor add(const Tensor& lhs, const Tensor& rhs, MemoryPool& pool) const override;
+  Tensor mul(const Tensor& lhs, const Tensor& rhs, MemoryPool& pool) const override;
   Tensor matmul(const Tensor& lhs, const Tensor& rhs, MemoryPool& pool) const override;
   Tensor sigmoid(const Tensor& input, MemoryPool& pool) const override;
   Tensor tanh(const Tensor& input, MemoryPool& pool) const override;

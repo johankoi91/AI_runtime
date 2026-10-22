@@ -113,6 +113,16 @@ void test_add(TestContext& ctx) {
   ctx.expect_close(data[3], 12.0f, 1e-5f, "add[3]");
 }
 
+void test_mul(TestContext& ctx) {
+  runtime::CPUBackend backend;
+  runtime::MemoryPool pool;
+  const auto output = backend.mul(
+      runtime::Tensor::from_vector({2}, {2.0f, -3.0f}),
+      runtime::Tensor::from_vector({2}, {4.0f, -2.0f}), pool);
+  ctx.expect_close(output.data<float>()[0], 8.0f, 1e-6f, "mul[0]");
+  ctx.expect_close(output.data<float>()[1], 6.0f, 1e-6f, "mul[1]");
+}
+
 void test_matmul(TestContext& ctx) {
   // 这里验证的是最小矩阵乘法路径是否正确。
   runtime::Tensor lhs = runtime::Tensor::from_vector({2, 3}, {1, 2, 3, 4, 5, 6});
@@ -639,6 +649,7 @@ int main() {
   const std::vector<TestCase> tests = {
       {"tensor_basics", test_tensor_basics},
       {"add", test_add},
+      {"mul", test_mul},
       {"matmul", test_matmul},
       {"memory_pool_reuse", test_memory_pool_reuse},
       {"graph_execution", test_graph_execution},
