@@ -24,6 +24,7 @@
 #include "runtime/onnx_weights.h"
 #include "runtime/hush_bundle.h"
 #include "runtime/hush_model.h"
+#include "runtime/onnx_executor.h"
 
 #include <zlib.h>
 #include "runtime/memory_pool.h"
@@ -299,6 +300,17 @@ void test_onnx_weights(TestContext& ctx) {
                   "ONNX reader should preserve repeated integer attributes");
   ctx.expect_close(graph_info.initializer("weight").values[2], 3.5f, 1e-6f,
                    "ONNX graph should map initializer by name");
+
+  runtime::CPUBackend cpu_backend;
+  runtime::OnnxExecutor onnx_executor(cpu_backend);
+  runtime::MemoryPool pool;
+  const auto executed = onnx_executor.run(
+      graph_info,
+      {{"x", runtime::Tensor::from_vector({2, 2}, {1.0f, 2.0f, 3.0f, 4.0f})},
+       {"y", runtime::Tensor::from_vector({2, 2}, {5.0f, 6.0f, 7.0f, 8.0f})}},
+      pool);
+  ctx.expect_close(executed.at("z").data<float>()[0], 6.0f, 1e-6f,
+                   "ONNX executor should map Add to backend");
 }
 
 std::vector<std::uint8_t> gzip_bytes(const std::vector<std::uint8_t>& input) {
