@@ -267,6 +267,12 @@ void test_onnx_weights(TestContext& ctx) {
   append_field(node, 1, {'x'});
   append_field(node, 1, {'y'});
   append_field(node, 2, {'z'});
+  std::vector<std::uint8_t> stride_attribute;
+  append_string_field(stride_attribute, 1, "strides");
+  std::vector<std::uint8_t> stride_values;
+  append_varint(stride_values, 2);
+  append_field(stride_attribute, 8, stride_values);
+  append_field(node, 5, stride_attribute);
   append_field(graph, 1, node);
   append_field(graph, 2, {'g', 'r', 'a', 'p', 'h'});
   append_field(graph, 5, tensor);
@@ -288,6 +294,11 @@ void test_onnx_weights(TestContext& ctx) {
   ctx.expect_true(graph_info.nodes[0].op_type == "Add", "ONNX reader should preserve node op type");
   ctx.expect_true(graph_info.nodes[0].inputs.size() == 2 && graph_info.nodes[0].outputs[0] == "z",
                   "ONNX reader should preserve node inputs and outputs");
+  const auto& stride = graph_info.attribute(graph_info.nodes[0], "strides");
+  ctx.expect_true(stride.integers.size() == 1 && stride.integers[0] == 2,
+                  "ONNX reader should preserve repeated integer attributes");
+  ctx.expect_close(graph_info.initializer("weight").values[2], 3.5f, 1e-6f,
+                   "ONNX graph should map initializer by name");
 }
 
 std::vector<std::uint8_t> gzip_bytes(const std::vector<std::uint8_t>& input) {

@@ -183,6 +183,27 @@ OnnxNode parse_node(const std::vector<std::uint8_t>& bytes) {
     else if (wire == 2 && field == 2) node.outputs.push_back(parse_string(reader.length_delimited()));
     else if (wire == 2 && field == 3) node.name = parse_string(reader.length_delimited());
     else if (wire == 2 && field == 4) node.op_type = parse_string(reader.length_delimited());
+    else if (wire == 2 && field == 5) {
+      Reader attribute_reader{reader.length_delimited()};
+      OnnxNode::Attribute attribute;
+      while (!attribute_reader.done()) {
+        const std::uint64_t attribute_key = attribute_reader.varint();
+        const unsigned attribute_field = static_cast<unsigned>(attribute_key >> 3);
+        const unsigned attribute_wire = static_cast<unsigned>(attribute_key & 7);
+        if (attribute_field == 1 && attribute_wire == 2) {
+          attribute.name = parse_string(attribute_reader.length_delimited());
+        } else if (attribute_field == 3 && attribute_wire == 0) {
+          attribute.integer = static_cast<std::int64_t>(attribute_reader.varint());
+        } else if (attribute_field == 8 && attribute_wire == 2) {
+          attribute.integers = packed_int64(attribute_reader.length_delimited());
+        } else if (attribute_field == 4 && attribute_wire == 2) {
+          attribute.string = parse_string(attribute_reader.length_delimited());
+        } else {
+          attribute_reader.skip(attribute_wire);
+        }
+      }
+      node.attributes.push_back(std::move(attribute));
+    }
     else reader.skip(wire);
   }
   return node;
@@ -204,6 +225,22 @@ OnnxGraph parse_graph(const std::vector<std::uint8_t>& bytes) {
 }
 
 }  // namespace
+
+const WeightTensor& OnnxGraph::initializer(const std::string& name) const {
+  for (const WeightTensor& tensor : initializers) {
+    if (tensor.name == name) return tensor;
+  }
+  throw std::out_of_range("ONNX initializer not found: " + name);
+}
+
+const OnnxNode::Attribute& OnnxGraph::attribute(
+    const OnnxNode& node,
+    const std::string& name) const {
+  for (const OnnxNode::Attribute& attribute : node.attributes) {
+    if (attribute.name == name) return attribute;
+  }
+  throw std::out_of_range("ONNX attribute not found: " + name);
+}
 
 std::vector<WeightTensor> OnnxWeights::read_model(const std::string& path) {
   const auto model = read_file(path);
