@@ -43,9 +43,9 @@ int main() {
     double total_ms = 0.0;
     double encoder_ms = 0.0, decoder_ms = 0.0, audio_ms = 0.0;
     std::size_t output_count = 0;
+    runtime::HushStreamSession session(model, *backend, {});
+    runtime::MemoryPool pool;
     for (int iteration = 0; iteration < iterations; ++iteration) {
-      runtime::HushStreamSession session(model, *backend, {});
-      runtime::MemoryPool pool;
       const auto start = std::chrono::steady_clock::now();
       const auto encoder_start = start;
       const auto encoder = session.process_encoder({{"feat_erb", erb}, {"feat_spec", df}}, pool);
@@ -58,6 +58,7 @@ int main() {
       output_count = encoder.size() + decoders.erb.size() + decoders.df.size();
       total_ms += std::chrono::duration<double, std::milli>(
           std::chrono::steady_clock::now() - start).count();
+      pool.reset();
     }
     const double average_ms = total_ms / iterations;
     std::cout << "backend=" << backend->name() << " iterations=" << iterations

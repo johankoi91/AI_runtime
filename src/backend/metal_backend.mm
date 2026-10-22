@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
+#include <cstdint>
 
 namespace runtime {
 
@@ -361,6 +363,17 @@ void copy_output(id<MTLBuffer> buffer, Tensor& output) {
   std::memcpy(output.data<float>(), [buffer contents], output.nbytes());
 }
 
+std::uint64_t buffer_hash(const Tensor& tensor) {
+  const auto* bytes = reinterpret_cast<const std::uint8_t*>(tensor.data<float>());
+  std::uint64_t hash = 1469598103934665603ull;
+  for (std::size_t index = 0; index < tensor.nbytes(); ++index) {
+    hash ^= bytes[index];
+    hash *= 1099511628211ull;
+  }
+  hash ^= static_cast<std::uint64_t>(tensor.nbytes());
+  return hash;
+}
+
 }  // namespace
 
 struct MetalBackend::Impl {
@@ -379,8 +392,23 @@ struct MetalBackend::Impl {
   id<MTLComputePipelineState> erb_pipeline = nil;
   id<MTLComputePipelineState> norm_pipeline = nil;
   id<MTLComputePipelineState> istft_pipeline = nil;
+  std::unordered_map<std::uint64_t, id<MTLBuffer>> weight_buffers;
   TraceSink* trace = nullptr;
 };
+
+id<MTLBuffer> make_cached_weight_buffer(
+    id<MTLDevice> device,
+    const Tensor& tensor,
+    std::unordered_map<std::uint64_t, id<MTLBuffer>>& cache) {
+  const std::uint64_t key = buffer_hash(tensor);
+  const auto found = cache.find(key);
+  if (found != cache.end()) return found->second;
+  id<MTLBuffer> buffer = [device newBufferWithBytes:tensor.data<float>()
+                                             length:tensor.nbytes()
+                                            options:MTLResourceStorageModeShared];
+  cache.emplace(key, buffer);
+  return buffer;
+}
 
 MetalBackend::MetalBackend() : impl_(std::make_unique<Impl>()) {
   impl_->device = MTLCreateSystemDefaultDevice();
@@ -506,7 +534,7 @@ Tensor MetalBackend::add(const Tensor& lhs, const Tensor& rhs, MemoryPool& pool)
     impl_->trace->emit("metal", "buffer_allocated", "add output", output.nbytes());
   }
   id<MTLBuffer> lhs_buffer = make_input_buffer(impl_->device, lhs);
-  id<MTLBuffer> rhs_buffer = make_input_buffer(impl_->device, rhs);
+  id<MTLBuffer> rhs_buffer = make_cached_weight_buffer(impl_->device, rhs, impl_->weight_buffers);
   id<MTLBuffer> output_buffer =
       [impl_->device newBufferWithLength:output.nbytes() options:MTLResourceStorageModeShared];
   const uint32_t count = static_cast<uint32_t>(lhs.numel());
@@ -787,9 +815,9 @@ Tensor MetalBackend::gru_step(
   Tensor output = pool.allocate_tensor({hidden_size}, DType::Float32);
   id<MTLBuffer> input_buffer = make_input_buffer(impl_->device, input);
   id<MTLBuffer> hidden_buffer = make_input_buffer(impl_->device, hidden);
-  id<MTLBuffer> input_weights_buffer = make_input_buffer(impl_->device, input_weights);
-  id<MTLBuffer> hidden_weights_buffer = make_input_buffer(impl_->device, hidden_weights);
-  id<MTLBuffer> bias_buffer = make_input_buffer(impl_->device, bias);
+  id<MTLBuffer> input_weights_buffer = make_cached_weight_buffer(impl_->device, input_weights, impl_->weight_buffers);
+  id<MTLBuffer> hidden_weights_buffer = make_cached_weight_buffer(impl_->device, hidden_weights, impl_->weight_buffers);
+  id<MTLBuffer> bias_buffer = make_cached_weight_buffer(impl_->device, bias, impl_->weight_buffers);
   id<MTLBuffer> output_buffer =
       [impl_->device newBufferWithLength:output.nbytes() options:MTLResourceStorageModeShared];
   const uint32_t input_count = static_cast<uint32_t>(input_size);
@@ -849,8 +877,8 @@ Tensor MetalBackend::conv2d(
   Tensor output = pool.allocate_tensor(
       {batch, output_channels, output_height, output_width}, DType::Float32);
   id<MTLBuffer> input_buffer = make_input_buffer(impl_->device, input);
-  id<MTLBuffer> weights_buffer = make_input_buffer(impl_->device, weights);
-  id<MTLBuffer> bias_buffer = make_input_buffer(impl_->device, bias);
+  id<MTLBuffer> weights_buffer = make_cached_weight_buffer(impl_->device, weights, impl_->weight_buffers);
+  id<MTLBuffer> bias_buffer = make_cached_weight_buffer(impl_->device, bias, impl_->weight_buffers);
   id<MTLBuffer> output_buffer =
       [impl_->device newBufferWithLength:output.nbytes() options:MTLResourceStorageModeShared];
   const std::uint32_t values[] = {
@@ -916,8 +944,8 @@ Tensor MetalBackend::conv_transpose2d(
   Tensor output = pool.allocate_tensor(
       {batch, output_channels, output_height, output_width}, DType::Float32);
   id<MTLBuffer> input_buffer = make_input_buffer(impl_->device, input);
-  id<MTLBuffer> weights_buffer = make_input_buffer(impl_->device, weights);
-  id<MTLBuffer> bias_buffer = make_input_buffer(impl_->device, bias);
+  id<MTLBuffer> weights_buffer = make_cached_weight_buffer(impl_->device, weights, impl_->weight_buffers);
+  id<MTLBuffer> bias_buffer = make_cached_weight_buffer(impl_->device, bias, impl_->weight_buffers);
   id<MTLBuffer> output_buffer =
       [impl_->device newBufferWithLength:output.nbytes() options:MTLResourceStorageModeShared];
   const std::uint32_t values[] = {
@@ -965,7 +993,7 @@ Tensor MetalBackend::erb_filterbank(
   const std::size_t bands = filterbank.shape()[0];
   Tensor output = pool.allocate_tensor({frames, bands}, DType::Float32);
   id<MTLBuffer> spectrum_buffer = make_input_buffer(impl_->device, spectrum);
-  id<MTLBuffer> filterbank_buffer = make_input_buffer(impl_->device, filterbank);
+  id<MTLBuffer> filterbank_buffer = make_cached_weight_buffer(impl_->device, filterbank, impl_->weight_buffers);
   id<MTLBuffer> output_buffer =
       [impl_->device newBufferWithLength:output.nbytes() options:MTLResourceStorageModeShared];
   const uint32_t frame_count = static_cast<uint32_t>(frames);
