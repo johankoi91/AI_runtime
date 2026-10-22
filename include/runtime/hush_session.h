@@ -50,6 +50,13 @@ class HushStreamSession {
       const std::string& erb_input_name,
       const std::string& df_input_name,
       MemoryPool& pool);
+  AudioFrame process_audio(
+      const AudioFrame& frame,
+      const std::string& erb_input_name,
+      const std::string& df_input_name,
+      const std::string& mask_output_name,
+      const Backend& backend,
+      MemoryPool& pool);
   void reset();
 
   std::size_t frame_index() const { return frame_index_; }

@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <stdexcept>
 
+#include "runtime/kernels.h"
+
 namespace runtime {
 
 HushStreamSession::HushStreamSession(
@@ -123,6 +125,33 @@ std::unordered_map<std::string, Tensor> HushStreamSession::process_audio_frame(
   const HushFeatures features = frontend_.process(frame);
   return process_encoder(
       {{erb_input_name, features.erb}, {df_input_name, features.df}}, pool);
+}
+
+AudioFrame HushStreamSession::process_audio(
+    const AudioFrame& frame,
+    const std::string& erb_input_name,
+    const std::string& df_input_name,
+    const std::string& mask_output_name,
+    const Backend& backend,
+    MemoryPool& pool) {
+  validate_frame(frame);
+  const HushFeatures features = frontend_.process(frame);
+  const auto encoder_outputs = process_encoder(
+      {{erb_input_name, features.erb}, {df_input_name, features.df}}, pool);
+  const auto decoder_outputs = process_decoders(encoder_outputs, {}, {}, pool);
+  const auto mask_iterator = decoder_outputs.erb.find(mask_output_name);
+  if (mask_iterator == decoder_outputs.erb.end()) {
+    throw std::runtime_error("Hush ERB decoder mask output is missing: " + mask_output_name);
+  }
+  const Tensor projection = Tensor::from_vector(
+      {features.spectrum.shape()[1], mask_iterator->second.shape()[1]},
+      std::vector<float>(features.spectrum.shape()[1] * mask_iterator->second.shape()[1], 1.0f));
+  const Tensor masked = cpu::apply_erb_mask(
+      features.spectrum, mask_iterator->second, projection, &pool);
+  const Tensor audio = backend.istft(
+      masked, model_.config.fft_size, model_.config.hop_size, frame.sample_count(), pool);
+  return AudioFrame(AudioFormat{model_.config.sample_rate, 1},
+                    std::vector<float>(audio.data<float>(), audio.data<float>() + audio.numel()));
 }
 
 void HushStreamSession::reset() {

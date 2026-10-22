@@ -621,6 +621,19 @@ void test_hush_stream_session(TestContext& ctx) {
   ctx.expect_close(decoder_outputs.df.at("df_out").data<float>()[1], std::tanh(0.5f), 1e-6f,
                    "DF decoder should receive encoder output");
 
+  runtime::HushModel full_model = decoder_model;
+  full_model.encoder.inputs = {"erb", "df"};
+  full_model.encoder.nodes[0].inputs = {"erb"};
+  full_model.encoder.nodes[0].outputs = {"hidden"};
+  full_model.encoder.outputs = {"hidden"};
+  runtime::HushStreamSession full_session(full_model, backend);
+  runtime::MemoryPool full_pool;
+  const runtime::AudioFrame enhanced = full_session.process_audio(
+      runtime::AudioFrame::mono_16k(std::vector<float>(160, 0.1f)),
+      "erb", "df", "erb_out", backend, full_pool);
+  ctx.expect_true(enhanced.sample_count() == 160, "full Hush audio pipeline should preserve frame length");
+  ctx.expect_true(std::isfinite(enhanced.samples()[80]), "full Hush audio output should be finite");
+
   pool.reset();
   const auto second = session.process_encoder(
       {{"x", runtime::Tensor::from_vector({2}, {2.0f, 3.0f})}}, pool);
