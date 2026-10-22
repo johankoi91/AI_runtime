@@ -33,6 +33,7 @@ Tensor conv2d(
     const Tensor& bias,
     std::size_t stride,
     std::size_t padding,
+    std::size_t groups = 1,
     MemoryPool* pool = nullptr);
 Tensor conv_transpose2d(
     const Tensor& input,

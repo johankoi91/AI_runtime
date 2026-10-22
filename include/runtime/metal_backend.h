@@ -31,6 +31,7 @@ class MetalBackend final : public Backend {
       const Tensor& bias,
       std::size_t stride,
       std::size_t padding,
+      std::size_t groups,
       MemoryPool& pool) const override;
   Tensor gru_step(
       const Tensor& input,

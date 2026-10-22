@@ -39,6 +39,7 @@ class Backend {
       const Tensor& bias,
       std::size_t stride,
       std::size_t padding,
+      std::size_t groups,
       MemoryPool& pool) const = 0;
   virtual Tensor conv_transpose2d(
       const Tensor& input,

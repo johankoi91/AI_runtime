@@ -15,6 +15,17 @@ int main() {
   }
   try {
     const runtime::HushModel model = runtime::HushModel::load(path);
+    for (const auto& node : model.encoder.nodes) {
+      bool mentions = node.name.find("df_fc_emb") != std::string::npos;
+      for (const auto& output : node.outputs) mentions = mentions || output == "/Reshape_output_0";
+      if (mentions) {
+        std::cout << "node " << node.name << " op=" << node.op_type << " inputs=";
+        for (const auto& input : node.inputs) std::cout << input << ',';
+        std::cout << " outputs=";
+        for (const auto& output : node.outputs) std::cout << output << ',';
+        std::cout << "\n";
+      }
+    }
     runtime::CPUBackend backend;
     runtime::HushStreamSession session(model, backend, {});
     runtime::MemoryPool pool;
