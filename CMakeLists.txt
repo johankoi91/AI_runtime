@@ -29,6 +29,7 @@ add_library(mini_runtime
   src/kernels/cpu/conv2d.cpp
   src/kernels/cpu/conv_transpose2d.cpp
   src/kernels/cpu/erb.cpp
+  src/kernels/cpu/shape.cpp
   src/kernels/cpu/matmul.cpp
 )
 

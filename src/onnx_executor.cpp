@@ -1,10 +1,17 @@
 #include "runtime/onnx_executor.h"
 
+#include <numeric>
 #include <stdexcept>
+
+#include "runtime/kernels.h"
 
 namespace runtime {
 
 namespace {
+
+std::size_t product(const Shape& shape) {
+  return std::accumulate(shape.begin(), shape.end(), std::size_t{1}, std::multiplies<std::size_t>{});
+}
 
 const Tensor& lookup(const std::unordered_map<std::string, Tensor>& tensors, const std::string& name) {
   const auto iterator = tensors.find(name);
@@ -92,6 +99,38 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
                                attribute_size(graph, node, "pads", 0), pool);
     } else if (node.op_type == "GRU") {
       output = run_gru_step(backend_, node, tensors, pool);
+    } else if (node.op_type == "Reshape") {
+      if (node.inputs.size() != 2) throw std::runtime_error("Reshape requires data and shape inputs");
+      const Tensor& shape_tensor = lookup(tensors, node.inputs[1]);
+      std::vector<std::size_t> shape;
+      for (std::size_t index = 0; index < shape_tensor.numel(); ++index) {
+        const float value = shape_tensor.data<float>()[index];
+        if (value < 0.0f) throw std::runtime_error("Reshape negative dimensions are unsupported");
+        shape.push_back(static_cast<std::size_t>(value));
+      }
+      output = cpu::reshape(lookup(tensors, node.inputs[0]), shape);
+    } else if (node.op_type == "Transpose") {
+      std::vector<std::size_t> permutation;
+      try {
+        const auto& attribute = graph.attribute(node, "perm");
+        for (std::int64_t value : attribute.integers) permutation.push_back(static_cast<std::size_t>(value));
+      } catch (const std::out_of_range&) {
+        for (std::size_t index = lookup(tensors, node.inputs[0]).rank(); index-- > 0;) permutation.push_back(index);
+      }
+      output = cpu::transpose(lookup(tensors, node.inputs[0]), permutation, &pool);
+    } else if (node.op_type == "Concat") {
+      const auto& attribute = graph.attribute(node, "axis");
+      std::vector<const Tensor*> concat_inputs;
+      for (const std::string& input_name : node.inputs) concat_inputs.push_back(&lookup(tensors, input_name));
+      output = cpu::concat(concat_inputs, static_cast<std::size_t>(attribute.integer), &pool);
+    } else if (node.op_type == "Flatten") {
+      if (node.inputs.size() != 1) throw std::runtime_error("Flatten requires one input");
+      const Tensor& input = lookup(tensors, node.inputs[0]);
+      const std::size_t axis = attribute_size(graph, node, "axis", 1);
+      if (axis > input.rank()) throw std::runtime_error("Flatten axis is out of range");
+      const std::size_t left = product(Shape(input.shape().begin(), input.shape().begin() + axis));
+      const std::size_t right = input.numel() / left;
+      output = cpu::reshape(input, {left, right});
     } else {
       throw std::runtime_error("unsupported ONNX op in stage 15: " + node.op_type);
     }

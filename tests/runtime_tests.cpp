@@ -408,6 +408,26 @@ void test_hush_model(TestContext& ctx) {
   ctx.expect_true(model.df_decoder.nodes[0].op_type == "GRU", "Hush model should load DF decoder graph");
 }
 
+void test_shape_kernels(TestContext& ctx) {
+  const runtime::Tensor input = runtime::Tensor::from_vector(
+      {2, 3}, {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f});
+  const runtime::Tensor reshaped = runtime::cpu::reshape(input, {3, 2});
+  ctx.expect_true(reshaped.shape() == runtime::Shape({3, 2}), "reshape should update shape");
+  ctx.expect_close(reshaped.data<float>()[4], 5.0f, 1e-6f, "reshape should preserve values");
+
+  const runtime::Tensor transposed = runtime::cpu::transpose(input, {1, 0});
+  ctx.expect_true(transposed.shape() == runtime::Shape({3, 2}), "transpose should permute shape");
+  ctx.expect_close(transposed.data<float>()[1], 4.0f, 1e-6f, "transpose should permute values");
+
+  const runtime::Tensor lhs = runtime::Tensor::from_vector({2, 1}, {1.0f, 2.0f});
+  const runtime::Tensor rhs = runtime::Tensor::from_vector({2, 2}, {3.0f, 4.0f, 5.0f, 6.0f});
+  const std::vector<const runtime::Tensor*> parts = {&lhs, &rhs};
+  const runtime::Tensor joined = runtime::cpu::concat(parts, 1);
+  ctx.expect_true(joined.shape() == runtime::Shape({2, 3}), "concat should expand axis");
+  ctx.expect_close(joined.data<float>()[3], 2.0f, 1e-6f, "concat should preserve row order");
+  ctx.expect_close(joined.data<float>()[5], 6.0f, 1e-6f, "concat should copy final value");
+}
+
 }  // namespace
 
 int main() {
@@ -433,6 +453,7 @@ int main() {
       {"onnx_weights", test_onnx_weights},
       {"hush_bundle", test_hush_bundle},
       {"hush_model", test_hush_model},
+      {"shape_kernels", test_shape_kernels},
   };
 
   int passed_tests = 0;
