@@ -489,6 +489,34 @@ void test_onnx_conv_transpose(TestContext& ctx) {
                    "ONNX ConvTranspose should preserve bias and kernel output");
 }
 
+void test_onnx_shape_constant(TestContext& ctx) {
+  runtime::OnnxGraph graph;
+  runtime::OnnxNode shape;
+  shape.name = "shape";
+  shape.op_type = "Shape";
+  shape.inputs = {"x"};
+  shape.outputs = {"shape_out"};
+  graph.nodes.push_back(shape);
+  runtime::OnnxNode constant;
+  constant.name = "constant";
+  constant.op_type = "Constant";
+  constant.outputs = {"constant_out"};
+  runtime::WeightTensor value{.name = "", .shape = {2}, .values = {7.0f, 9.0f}};
+  constant.attributes.push_back({.name = "value", .has_tensor = true, .tensor = value});
+  graph.nodes.push_back(constant);
+  runtime::CPUBackend backend;
+  runtime::OnnxExecutor executor(backend);
+  runtime::MemoryPool pool;
+  const auto outputs = executor.run(
+      graph, {{"x", runtime::Tensor::from_vector({3, 4}, std::vector<float>(12, 1.0f))}}, pool);
+  ctx.expect_true(outputs.at("shape_out").shape() == runtime::Shape({2}),
+                  "Shape should return one value per input dimension");
+  ctx.expect_close(outputs.at("shape_out").data<float>()[1], 4.0f, 1e-6f,
+                   "Shape should return input dimensions");
+  ctx.expect_close(outputs.at("constant_out").data<float>()[1], 9.0f, 1e-6f,
+                   "Constant should return tensor attribute values");
+}
+
 void test_shape_kernels(TestContext& ctx) {
   const runtime::Tensor input = runtime::Tensor::from_vector(
       {2, 3}, {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f});
@@ -759,6 +787,7 @@ int main() {
       {"hush_stream_session", test_hush_stream_session},
       {"onnx_conv_attributes", test_onnx_conv_attributes},
       {"onnx_conv_transpose", test_onnx_conv_transpose},
+      {"onnx_shape_constant", test_onnx_shape_constant},
       {"hush_frontend", test_hush_frontend},
       {"erb_mask", test_erb_mask},
       {"backend_istft", test_backend_istft},

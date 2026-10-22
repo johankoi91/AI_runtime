@@ -180,6 +180,20 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
       const std::size_t left = product(Shape(input.shape().begin(), input.shape().begin() + axis));
       const std::size_t right = input.numel() / left;
       output = cpu::reshape(input, {left, right});
+    } else if (node.op_type == "Shape") {
+      if (node.inputs.size() != 1) throw std::runtime_error("Shape requires one input");
+      const Tensor& input = lookup(tensors, node.inputs[0]);
+      std::vector<float> shape_values;
+      shape_values.reserve(input.rank());
+      for (std::size_t dimension : input.shape()) {
+        shape_values.push_back(static_cast<float>(dimension));
+      }
+      output = Tensor::from_vector({shape_values.size()}, shape_values);
+    } else if (node.op_type == "Constant") {
+      if (!node.inputs.empty()) throw std::runtime_error("Constant cannot have inputs");
+      const auto& value = graph.attribute(node, "value");
+      if (!value.has_tensor) throw std::runtime_error("Constant requires a tensor value attribute");
+      output = Tensor::from_vector(value.tensor.shape, value.tensor.values);
     } else {
       throw std::runtime_error("unsupported ONNX op in stage 15: " + node.op_type);
     }

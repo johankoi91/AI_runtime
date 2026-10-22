@@ -18,6 +18,8 @@ struct OnnxNode {
     std::int64_t integer = 0;
     std::vector<std::int64_t> integers;
     std::string string;
+    bool has_tensor = false;
+    WeightTensor tensor;
   };
   std::vector<Attribute> attributes;
 };
