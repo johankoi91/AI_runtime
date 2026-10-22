@@ -29,6 +29,23 @@ class Backend {
       const Tensor& lhs,
       const Tensor& rhs,
       MemoryPool& pool) const = 0;
+  virtual Tensor sigmoid(const Tensor& input, MemoryPool& pool) const = 0;
+  virtual Tensor tanh(const Tensor& input, MemoryPool& pool) const = 0;
+  virtual Tensor relu(const Tensor& input, MemoryPool& pool) const = 0;
+  virtual Tensor conv2d(
+      const Tensor& input,
+      const Tensor& weights,
+      const Tensor& bias,
+      std::size_t stride,
+      std::size_t padding,
+      MemoryPool& pool) const = 0;
+  virtual Tensor gru_step(
+      const Tensor& input,
+      const Tensor& hidden,
+      const Tensor& input_weights,
+      const Tensor& hidden_weights,
+      const Tensor& bias,
+      MemoryPool& pool) const = 0;
 
   virtual void set_trace_sink(TraceSink* sink) const { (void)sink; }
 };

@@ -12,6 +12,23 @@ class CPUBackend final : public Backend {
   std::string_view name() const override;
   Tensor add(const Tensor& lhs, const Tensor& rhs, MemoryPool& pool) const override;
   Tensor matmul(const Tensor& lhs, const Tensor& rhs, MemoryPool& pool) const override;
+  Tensor sigmoid(const Tensor& input, MemoryPool& pool) const override;
+  Tensor tanh(const Tensor& input, MemoryPool& pool) const override;
+  Tensor relu(const Tensor& input, MemoryPool& pool) const override;
+  Tensor conv2d(
+      const Tensor& input,
+      const Tensor& weights,
+      const Tensor& bias,
+      std::size_t stride,
+      std::size_t padding,
+      MemoryPool& pool) const override;
+  Tensor gru_step(
+      const Tensor& input,
+      const Tensor& hidden,
+      const Tensor& input_weights,
+      const Tensor& hidden_weights,
+      const Tensor& bias,
+      MemoryPool& pool) const override;
 };
 
 }  // namespace runtime

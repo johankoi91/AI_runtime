@@ -271,6 +271,14 @@ kernel void exponential_unit_norm_kernel(
     output[index] = input[index] * scale;
   }
 }
+
+kernel void relu_kernel(
+    device const float* input [[buffer(0)]],
+    device float* output [[buffer(1)]],
+    constant uint& count [[buffer(2)]],
+    uint index [[thread_position_in_grid]]) {
+  if (index < count) output[index] = max(input[index], 0.0f);
+}
 )metal";
 
 void check_status(id<MTLCommandBuffer> command_buffer, const char* operation) {
@@ -302,6 +310,7 @@ struct MetalBackend::Impl {
   id<MTLComputePipelineState> stft_pipeline = nil;
   id<MTLComputePipelineState> sigmoid_pipeline = nil;
   id<MTLComputePipelineState> tanh_pipeline = nil;
+  id<MTLComputePipelineState> relu_pipeline = nil;
   id<MTLComputePipelineState> gru_pipeline = nil;
   id<MTLComputePipelineState> conv2d_pipeline = nil;
   id<MTLComputePipelineState> conv_transpose2d_pipeline = nil;
@@ -335,6 +344,7 @@ MetalBackend::MetalBackend() : impl_(std::make_unique<Impl>()) {
   id<MTLFunction> stft_function = [library newFunctionWithName:@"stft_kernel"];
   id<MTLFunction> sigmoid_function = [library newFunctionWithName:@"sigmoid_kernel"];
   id<MTLFunction> tanh_function = [library newFunctionWithName:@"tanh_kernel"];
+  id<MTLFunction> relu_function = [library newFunctionWithName:@"relu_kernel"];
   id<MTLFunction> gru_function = [library newFunctionWithName:@"gru_step_kernel"];
   id<MTLFunction> conv2d_function = [library newFunctionWithName:@"conv2d_kernel"];
   id<MTLFunction> conv_transpose2d_function =
@@ -361,6 +371,11 @@ MetalBackend::MetalBackend() : impl_(std::make_unique<Impl>()) {
       [impl_->device newComputePipelineStateWithFunction:tanh_function error:&error];
   if (impl_->sigmoid_pipeline == nil || impl_->tanh_pipeline == nil) {
     throw std::runtime_error("MetalBackend: failed to create activation pipelines");
+  }
+  impl_->relu_pipeline =
+      [impl_->device newComputePipelineStateWithFunction:relu_function error:&error];
+  if (impl_->relu_pipeline == nil) {
+    throw std::runtime_error("MetalBackend: failed to create relu pipeline");
   }
   impl_->gru_pipeline =
       [impl_->device newComputePipelineStateWithFunction:gru_function error:&error];
@@ -635,6 +650,11 @@ Tensor MetalBackend::sigmoid(const Tensor& input, MemoryPool& pool) const {
 Tensor MetalBackend::tanh(const Tensor& input, MemoryPool& pool) const {
   return metal_activation(
       impl_->device, impl_->queue, impl_->tanh_pipeline, input, pool, "tanh");
+}
+
+Tensor MetalBackend::relu(const Tensor& input, MemoryPool& pool) const {
+  return metal_activation(
+      impl_->device, impl_->queue, impl_->relu_pipeline, input, pool, "relu");
 }
 
 Tensor MetalBackend::gru_step(
