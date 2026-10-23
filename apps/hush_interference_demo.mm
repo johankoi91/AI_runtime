@@ -1,6 +1,5 @@
 #import <AVFoundation/AVFoundation.h>
 
-#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
@@ -12,22 +11,9 @@
 #include "runtime/hush_model.h"
 #include "runtime/hush_session.h"
 #include "runtime/metal_backend.h"
+#include "hush_speech_demo.h"
 
 namespace {
-constexpr double kPi = 3.14159265358979323846;
-
-std::vector<float> make_voice(double frequency, double modulation, std::size_t samples, float gain) {
-  std::vector<float> output(samples);
-  for (std::size_t index = 0; index < samples; ++index) {
-    const double time = static_cast<double>(index) / 16'000.0;
-    const double envelope = 0.65 + 0.35 * std::sin(2.0 * kPi * 2.1 * time);
-    const double fundamental = std::sin(2.0 * kPi * frequency * time + modulation * std::sin(2.0 * kPi * 3.0 * time));
-    const double harmonic = 0.35 * std::sin(2.0 * kPi * frequency * 2.01 * time);
-    output[index] = gain * static_cast<float>(envelope * (fundamental + harmonic));
-  }
-  return output;
-}
-
 void play_wav(const std::string& path) {
   AVAudioPlayer* player = [[AVAudioPlayer alloc] initWithContentsOfURL:
       [NSURL fileURLWithPath:[NSString stringWithUTF8String:path.c_str()]] error:nil];
@@ -43,11 +29,13 @@ int main(int argc, const char* argv[]) {
     if (bundle == nullptr || *bundle == '\0') { std::cerr << "HUSH_MODEL_BUNDLE is required\n"; return 2; }
     const bool play = argc > 1 && std::string(argv[1]) == "--play";
     try {
-      const std::size_t samples_count = 16'000 * 3;
-      const auto primary = make_voice(180.0, 0.7, samples_count, 0.18f);
-      const auto background = make_voice(265.0, 1.1, samples_count, 0.13f);
-      std::vector<float> mixed(samples_count);
-      for (std::size_t index = 0; index < samples_count; ++index) mixed[index] = primary[index] + background[index];
+      const auto demo = make_hush_speech_demo(
+          std::string(HUSH_DEMO_AUDIO_DIR) + "/hush-demo-target.wav",
+          std::string(HUSH_DEMO_AUDIO_DIR) + "/hush-demo-background.wav", 18.0f);
+      const auto& mixed = demo.mixed;
+      const std::size_t samples_count = mixed.size();
+      runtime::write_wav_mono16("/tmp/hush-background-target.wav", demo.target);
+      runtime::write_wav_mono16("/tmp/hush-background-interferer.wav", demo.background);
       runtime::write_wav_mono16("/tmp/hush-background-input.wav", mixed);
 
       const runtime::HushModel model = runtime::HushModel::load(bundle);
@@ -57,16 +45,19 @@ int main(int argc, const char* argv[]) {
       std::vector<float> enhanced;
       enhanced.reserve(samples_count);
       for (std::size_t offset = 0; offset < samples_count; offset += 160) {
-        std::vector<float> frame(mixed.begin() + offset, mixed.begin() + offset + 160);
+        std::vector<float> frame(160, 0.0f);
+        std::copy_n(mixed.data() + offset, std::min<std::size_t>(160, samples_count - offset), frame.data());
         const auto output = session.process_audio(
             runtime::AudioFrame::mono_16k(std::move(frame)),
             "feat_erb", "feat_spec", "m", backend, pool);
         enhanced.insert(enhanced.end(), output.samples().begin(), output.samples().end());
         pool.reset();
       }
+      enhanced.resize(samples_count);
       runtime::write_wav_mono16("/tmp/hush-background-output.wav", enhanced);
       std::cout << "input=/tmp/hush-background-input.wav\noutput=/tmp/hush-background-output.wav\n"
-                << "description=primary voice plus simulated background speaker -> Hush Metal output\n";
+                << "target=/tmp/hush-background-target.wav\n"
+                << "description=two synthesized Chinese voices, background 18 dB lower -> Hush Metal output\n";
       if (play) {
         std::cout << "playing mixed input...\n";
         play_wav("/tmp/hush-background-input.wav");

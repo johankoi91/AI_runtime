@@ -99,6 +99,7 @@ set_target_properties(hush_quality PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT
 
 if(APPLE)
   add_executable(hush_interference_demo apps/hush_interference_demo.mm)
+  target_compile_definitions(hush_interference_demo PRIVATE HUSH_DEMO_AUDIO_DIR="${PROJECT_SOURCE_DIR}/apps/resources")
   target_link_libraries(hush_interference_demo PRIVATE mini_runtime "-framework AVFoundation")
   target_compile_options(hush_interference_demo PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
   set_target_properties(hush_interference_demo PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
@@ -121,6 +122,11 @@ if(APPLE)
   target_compile_options(hush_mic_demo PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
   set_target_properties(hush_mic_demo PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
   add_executable(hush_mic_ui apps/hush_mic_ui.mm)
+  set(HUSH_DEMO_AUDIO
+    apps/resources/hush-demo-target.wav
+    apps/resources/hush-demo-background.wav)
+  set_source_files_properties(${HUSH_DEMO_AUDIO} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+  target_sources(hush_mic_ui PRIVATE ${HUSH_DEMO_AUDIO})
   target_link_libraries(hush_mic_ui PRIVATE mini_runtime "-framework AVFoundation" "-framework AppKit")
   target_compile_options(hush_mic_ui PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
   set_target_properties(hush_mic_ui PROPERTIES

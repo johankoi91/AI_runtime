@@ -15,6 +15,7 @@
 #include "runtime/hush_model.h"
 #include "runtime/hush_session.h"
 #include "runtime/metal_backend.h"
+#include "hush_speech_demo.h"
 
 namespace {
 
@@ -92,6 +93,7 @@ struct Metrics {
   dispatch_queue_t recording_queue_;
   NSButton* start_button_;
   NSPopUpButton* backend_popup_;
+  NSPopUpButton* demo_mix_popup_;
   WaveformView* waveform_view_;
   WaveformView* output_waveform_view_;
   AVAudioEngine* engine_;
@@ -188,7 +190,7 @@ struct Metrics {
   [content addSubview:metrics_label_];
   NSTextField* hint = [NSTextField labelWithString:@"Input: 16 kHz mono · 160 samples/frame · Metal output path · Permission required"];
   hint.textColor = [NSColor tertiaryLabelColor];
-  hint.frame = NSMakeRect(32, 72, 850, 22);
+  hint.frame = NSMakeRect(32, 80, 850, 22);
   [content addSubview:hint];
   NSButton* generate_demo = [NSButton buttonWithTitle:@"Generate Background Voice Demo" target:self action:@selector(generateInterferenceDemo:)];
   generate_demo.frame = NSMakeRect(32, 30, 220, 30);
@@ -199,6 +201,12 @@ struct Metrics {
   NSButton* play_output = [NSButton buttonWithTitle:@"Play Enhanced Output" target:self action:@selector(playEnhancedOutput:)];
   play_output.frame = NSMakeRect(412, 30, 150, 30);
   [content addSubview:play_output];
+  NSButton* play_target = [NSButton buttonWithTitle:@"Play Target Reference" target:self action:@selector(playTargetReference:)];
+  play_target.frame = NSMakeRect(570, 30, 160, 30);
+  [content addSubview:play_target];
+  demo_mix_popup_ = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(735, 30, 145, 30) pullsDown:NO];
+  [demo_mix_popup_ addItemsWithTitles:@[@"Background −18 dB", @"Background −12 dB", @"Background −24 dB", @"Background −3 dB", @"Equal voices 0 dB"]];
+  [content addSubview:demo_mix_popup_];
   record_button_ = [NSButton buttonWithTitle:@"Record A/B Test" target:self action:@selector(recordComparison:)];
   record_button_.frame = NSMakeRect(32, 0, 180, 28);
   [content addSubview:record_button_];
@@ -211,9 +219,9 @@ struct Metrics {
   NSButton* play_hush = [NSButton buttonWithTitle:@"Play Hush" target:self action:@selector(playHush:)];
   play_hush.frame = NSMakeRect(465, 0, 100, 28);
   [content addSubview:play_hush];
-  demo_label_ = [NSTextField labelWithString:@"Demo: generate a simulated primary voice + background speaker mix"];
+  demo_label_ = [NSTextField labelWithString:@"Speech demo: two synthesized Chinese voices · choose mix level, then Generate · compare with Target Reference"];
   demo_label_.textColor = [NSColor tertiaryLabelColor];
-  demo_label_.frame = NSMakeRect(580, 34, 300, 22);
+  demo_label_.frame = NSMakeRect(32, 58, 848, 18);
   [content addSubview:demo_label_];
   [window_ makeKeyAndOrderFront:nil];
   [NSTimer scheduledTimerWithTimeInterval:0.1 target:self selector:@selector(refreshUI:) userInfo:nil repeats:YES];
@@ -344,41 +352,55 @@ struct Metrics {
 }
 
 - (void)generateInterferenceDemo:(id)sender {
-  (void)sender;
   if (!model_) { demo_label_.stringValue = @"Demo: load the model first"; return; }
-  demo_label_.stringValue = @"Demo: processing simulated background speaker…";
-  auto model = model_.get();
-  auto backend = backend_.get();
+  NSString* target_path = [[NSBundle mainBundle] pathForResource:@"hush-demo-target" ofType:@"wav"];
+  NSString* background_path = [[NSBundle mainBundle] pathForResource:@"hush-demo-background" ofType:@"wav"];
+  if (target_path == nil || background_path == nil) { demo_label_.stringValue = @"Speech demo recordings are missing from the app bundle"; return; }
+  const float levels[] = {18.0f, 12.0f, 24.0f, 3.0f, 0.0f};
+  const float input_sir = levels[demo_mix_popup_.indexOfSelectedItem];
+  const bool use_metal = backend_->name() == "metal";
+  auto demo_model = std::make_shared<runtime::HushModel>(*model_);
+  NSButton* generate_button = [sender isKindOfClass:[NSButton class]] ? sender : nil;
+  generate_button.enabled = NO;
+  demo_label_.stringValue = @"Speech demo: processing two independent synthesized voices…";
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    @autoreleasepool {
     try {
-      const std::size_t total = 16'000 * 3;
-      std::vector<float> mixed(total);
-      for (std::size_t index = 0; index < total; ++index) {
-        const double time = static_cast<double>(index) / 16'000.0;
-        const float primary = 0.18f * static_cast<float>(std::sin(2.0 * M_PI * 180.0 * time + 0.7 * std::sin(2.0 * M_PI * 3.0 * time)));
-        const float background = 0.13f * static_cast<float>(std::sin(2.0 * M_PI * 265.0 * time + 1.1 * std::sin(2.0 * M_PI * 2.0 * time)));
-        mixed[index] = primary + background;
-      }
+      const auto demo = make_hush_speech_demo(target_path.UTF8String, background_path.UTF8String, input_sir);
+      const auto& mixed = demo.mixed;
+      const std::size_t total = mixed.size();
+      runtime::write_wav_mono16("/tmp/hush-background-target.wav", demo.target);
+      runtime::write_wav_mono16("/tmp/hush-background-interferer.wav", demo.background);
       runtime::write_wav_mono16("/tmp/hush-background-input.wav", mixed);
-      runtime::HushStreamSession demo_session(*model, *backend, {});
+      std::unique_ptr<runtime::Backend> demo_backend;
+      if (use_metal) demo_backend = std::make_unique<runtime::MetalBackend>();
+      else demo_backend = std::make_unique<runtime::CPUBackend>();
+      runtime::HushStreamSession demo_session(*demo_model, *demo_backend, {});
       runtime::MemoryPool demo_pool;
       std::vector<float> enhanced; enhanced.reserve(total);
       for (std::size_t offset = 0; offset < total; offset += 160) {
-        std::vector<float> frame(mixed.begin() + offset, mixed.begin() + offset + 160);
+        std::vector<float> frame(160, 0.0f);
+        std::copy_n(mixed.data() + offset, std::min<std::size_t>(160, total - offset), frame.data());
         const auto output = demo_session.process_audio(runtime::AudioFrame::mono_16k(std::move(frame)),
-                                                        "feat_erb", "feat_spec", "m", *backend, demo_pool);
+                                                        "feat_erb", "feat_spec", "m", *demo_backend, demo_pool);
         enhanced.insert(enhanced.end(), output.samples().begin(), output.samples().end());
         demo_pool.reset();
       }
+      enhanced.resize(total);
       runtime::write_wav_mono16("/tmp/hush-background-output.wav", enhanced);
-      dispatch_async(dispatch_get_main_queue(), ^{ demo_label_.stringValue = @"Demo ready: mixed input and enhanced output saved in /tmp"; });
+      dispatch_async(dispatch_get_main_queue(), ^{
+        generate_button.enabled = YES;
+        demo_label_.stringValue = [NSString stringWithFormat:@"Speech demo ready · %.2fs · target/background %.0f dB · compare Target, Mixed, Hush", total / 16000.0, input_sir];
+      });
     } catch (const std::exception& error) {
       const std::string message = error.what();
-      dispatch_async(dispatch_get_main_queue(), ^{ demo_label_.stringValue = [NSString stringWithUTF8String:message.c_str()]; });
+      dispatch_async(dispatch_get_main_queue(), ^{ generate_button.enabled = YES; demo_label_.stringValue = [NSString stringWithUTF8String:message.c_str()]; });
+    }
     }
   });
 }
 
+- (void)playTargetReference:(id)sender { (void)sender; [self playDemoFile:@"/tmp/hush-background-target.wav"]; }
 - (void)playMixedInput:(id)sender { (void)sender; [self playDemoFile:@"/tmp/hush-background-input.wav"]; }
 - (void)playEnhancedOutput:(id)sender { (void)sender; [self playDemoFile:@"/tmp/hush-background-output.wav"]; }
 - (void)playRawMic:(id)sender { (void)sender; [self playDemoFile:@"/tmp/hush-mic-raw.wav"]; }
