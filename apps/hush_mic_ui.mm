@@ -187,7 +187,7 @@ struct Metrics {
   NSButton* play_output = [NSButton buttonWithTitle:@"Play Enhanced Output" target:self action:@selector(playEnhancedOutput:)];
   play_output.frame = NSMakeRect(412, 30, 150, 30);
   [content addSubview:play_output];
-  record_button_ = [NSButton buttonWithTitle:@"Record 5s A/B Test" target:self action:@selector(recordComparison:)];
+  record_button_ = [NSButton buttonWithTitle:@"Record A/B Test" target:self action:@selector(recordComparison:)];
   record_button_.frame = NSMakeRect(32, 0, 180, 28);
   [content addSubview:record_button_];
   NSButton* play_raw = [NSButton buttonWithTitle:@"Play Raw Mic" target:self action:@selector(playRawMic:)];
@@ -209,25 +209,29 @@ struct Metrics {
 
 - (void)recordComparison:(id)sender {
   (void)sender;
-  if (recording_) return;
   if (!session_) { demo_label_.stringValue = @"A/B test: load the model first"; return; }
-  {
-    std::lock_guard<std::mutex> lock(recording_mutex_);
-    raw_recording_.clear(); bypass_recording_.clear(); enhanced_recording_.clear();
+  if (engine_ == nil) { demo_label_.stringValue = @"A/B test: start the microphone first"; return; }
+  if (!recording_) {
+    {
+      std::lock_guard<std::mutex> lock(recording_mutex_);
+      raw_recording_.clear(); bypass_recording_.clear(); enhanced_recording_.clear();
+    }
+    recording_ = true;
+    record_button_.title = @"Stop A/B Recording";
+    demo_label_.stringValue = @"A/B test recording… click Stop when finished";
+    return;
   }
-  recording_ = true;
-  record_button_.enabled = NO;
-  demo_label_.stringValue = @"A/B test: recording 5 seconds…";
-  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-    recording_ = false; record_button_.enabled = YES;
-    try {
-      std::lock_guard<std::mutex> lock(self->recording_mutex_);
-      runtime::write_wav_mono16("/tmp/hush-mic-raw.wav", self->raw_recording_);
-      runtime::write_wav_mono16("/tmp/hush-mic-bypass.wav", self->bypass_recording_);
-      runtime::write_wav_mono16("/tmp/hush-mic-enhanced.wav", self->enhanced_recording_);
-      self->demo_label_.stringValue = @"A/B test ready: use the three play buttons";
-    } catch (const std::exception& error) { self->demo_label_.stringValue = [NSString stringWithUTF8String:error.what()]; }
-  });
+  recording_ = false;
+  record_button_.title = @"Record A/B Test";
+  try {
+    std::lock_guard<std::mutex> lock(recording_mutex_);
+    runtime::write_wav_mono16("/tmp/hush-mic-raw.wav", raw_recording_);
+    runtime::write_wav_mono16("/tmp/hush-mic-bypass.wav", bypass_recording_);
+    runtime::write_wav_mono16("/tmp/hush-mic-enhanced.wav", enhanced_recording_);
+    demo_label_.stringValue = @"A/B test ready: use Raw, Bypass, or Hush playback";
+  } catch (const std::exception& error) {
+    demo_label_.stringValue = [NSString stringWithUTF8String:error.what()];
+  }
 }
 
 - (void)generateInterferenceDemo:(id)sender {
