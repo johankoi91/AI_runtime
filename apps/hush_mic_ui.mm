@@ -18,6 +18,12 @@
 
 namespace {
 
+std::string error_message(NSError* error, const char* fallback) {
+  NSString* description = error.localizedDescription;
+  const char* utf8 = description.UTF8String;
+  return utf8 != nullptr && utf8[0] != '\0' ? std::string(utf8) : std::string(fallback);
+}
+
 struct Metrics {
   std::atomic<std::uint64_t> frames{0};
   std::atomic<double> latency_ms{0.0};
@@ -258,7 +264,7 @@ struct Metrics {
           initWithPCMFormat:native_file.processingFormat frameCapacity:native_frames];
       NSError* read_error = nil;
       if (![native_file readIntoBuffer:native_buffer error:&read_error]) {
-        throw std::runtime_error(read_error.localizedDescription.UTF8String);
+        throw std::runtime_error(error_message(read_error, "could not read native capture"));
       }
       AVAudioFormat* target_format = [[AVAudioFormat alloc] initStandardFormatWithSampleRate:16000 channels:1];
       AVAudioConverter* offline_converter = [[AVAudioConverter alloc]
@@ -272,7 +278,7 @@ struct Metrics {
             if (delivered) { *status = AVAudioConverterInputStatus_EndOfStream; return nil; }
             delivered = YES; *status = AVAudioConverterInputStatus_HaveData; return native_buffer;
           }] == AVAudioConverterOutputStatus_Error || read_error != nil) {
-        throw std::runtime_error(read_error.localizedDescription.UTF8String);
+        throw std::runtime_error(error_message(read_error, "could not convert native capture"));
       }
       std::vector<float> raw(target_buffer.frameLength);
       std::copy_n(target_buffer.floatChannelData[0], target_buffer.frameLength, raw.data());
@@ -404,7 +410,7 @@ struct Metrics {
     if (recording_.load()) {
       NSError* write_error = nil;
       if (![native_capture_file_ writeFromBuffer:buffer error:&write_error] && write_error != nil) {
-        metrics_.error = write_error.localizedDescription.UTF8String;
+        metrics_.error = error_message(write_error, "could not write native capture");
       }
       return;
     }
