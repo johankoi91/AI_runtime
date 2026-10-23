@@ -71,6 +71,14 @@ struct Metrics {
   NSTextField* status_label_;
   NSTextField* metrics_label_;
   NSTextField* demo_label_;
+  NSButton* record_button_;
+  AVAudioPlayer* player_;
+  AVAudioConverter* converter_;
+  __block bool recording_;
+  std::mutex recording_mutex_;
+  std::vector<float> raw_recording_;
+  std::vector<float> bypass_recording_;
+  std::vector<float> enhanced_recording_;
   NSButton* start_button_;
   NSPopUpButton* backend_popup_;
   WaveformView* waveform_view_;
@@ -179,12 +187,47 @@ struct Metrics {
   NSButton* play_output = [NSButton buttonWithTitle:@"Play Enhanced Output" target:self action:@selector(playEnhancedOutput:)];
   play_output.frame = NSMakeRect(412, 30, 150, 30);
   [content addSubview:play_output];
+  record_button_ = [NSButton buttonWithTitle:@"Record 5s A/B Test" target:self action:@selector(recordComparison:)];
+  record_button_.frame = NSMakeRect(32, 0, 180, 28);
+  [content addSubview:record_button_];
+  NSButton* play_raw = [NSButton buttonWithTitle:@"Play Raw Mic" target:self action:@selector(playRawMic:)];
+  play_raw.frame = NSMakeRect(225, 0, 115, 28);
+  [content addSubview:play_raw];
+  NSButton* play_bypass = [NSButton buttonWithTitle:@"Play Bypass" target:self action:@selector(playBypass:)];
+  play_bypass.frame = NSMakeRect(350, 0, 105, 28);
+  [content addSubview:play_bypass];
+  NSButton* play_hush = [NSButton buttonWithTitle:@"Play Hush" target:self action:@selector(playHush:)];
+  play_hush.frame = NSMakeRect(465, 0, 100, 28);
+  [content addSubview:play_hush];
   demo_label_ = [NSTextField labelWithString:@"Demo: generate a simulated primary voice + background speaker mix"];
   demo_label_.textColor = [NSColor tertiaryLabelColor];
   demo_label_.frame = NSMakeRect(580, 34, 300, 22);
   [content addSubview:demo_label_];
   [window_ makeKeyAndOrderFront:nil];
   [NSTimer scheduledTimerWithTimeInterval:0.1 target:self selector:@selector(refreshUI:) userInfo:nil repeats:YES];
+}
+
+- (void)recordComparison:(id)sender {
+  (void)sender;
+  if (recording_) return;
+  if (!session_) { demo_label_.stringValue = @"A/B test: load the model first"; return; }
+  {
+    std::lock_guard<std::mutex> lock(recording_mutex_);
+    raw_recording_.clear(); bypass_recording_.clear(); enhanced_recording_.clear();
+  }
+  recording_ = true;
+  record_button_.enabled = NO;
+  demo_label_.stringValue = @"A/B test: recording 5 seconds…";
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+    recording_ = false; record_button_.enabled = YES;
+    try {
+      std::lock_guard<std::mutex> lock(self->recording_mutex_);
+      runtime::write_wav_mono16("/tmp/hush-mic-raw.wav", self->raw_recording_);
+      runtime::write_wav_mono16("/tmp/hush-mic-bypass.wav", self->bypass_recording_);
+      runtime::write_wav_mono16("/tmp/hush-mic-enhanced.wav", self->enhanced_recording_);
+      self->demo_label_.stringValue = @"A/B test ready: use the three play buttons";
+    } catch (const std::exception& error) { self->demo_label_.stringValue = [NSString stringWithUTF8String:error.what()]; }
+  });
 }
 
 - (void)generateInterferenceDemo:(id)sender {
@@ -225,10 +268,13 @@ struct Metrics {
 
 - (void)playMixedInput:(id)sender { (void)sender; [self playDemoFile:@"/tmp/hush-background-input.wav"]; }
 - (void)playEnhancedOutput:(id)sender { (void)sender; [self playDemoFile:@"/tmp/hush-background-output.wav"]; }
+- (void)playRawMic:(id)sender { (void)sender; [self playDemoFile:@"/tmp/hush-mic-raw.wav"]; }
+- (void)playBypass:(id)sender { (void)sender; [self playDemoFile:@"/tmp/hush-mic-bypass.wav"]; }
+- (void)playHush:(id)sender { (void)sender; [self playDemoFile:@"/tmp/hush-mic-enhanced.wav"]; }
 - (void)playDemoFile:(NSString*)path {
   if (![[NSFileManager defaultManager] fileExistsAtPath:path]) { demo_label_.stringValue = @"Demo: generate the files first"; return; }
-  AVAudioPlayer* player = [[AVAudioPlayer alloc] initWithContentsOfURL:[NSURL fileURLWithPath:path] error:nil];
-  [player play];
+  player_ = [[AVAudioPlayer alloc] initWithContentsOfURL:[NSURL fileURLWithPath:path] error:nil];
+  [player_ play];
 }
 
 - (void)chooseModel:(id)sender {
@@ -259,11 +305,21 @@ struct Metrics {
   if (!session_) { status_label_.stringValue = @"Choose a model first."; return; }
   engine_ = [[AVAudioEngine alloc] init];
   AVAudioInputNode* input = engine_.inputNode;
-  [input installTapOnBus:0 bufferSize:160 format:nil block:^(AVAudioPCMBuffer* buffer, AVAudioTime*) {
-    if (buffer.floatChannelData == nullptr) return;
-    const float* data = buffer.floatChannelData[0];
+  AVAudioFormat* output_format = [[AVAudioFormat alloc] initStandardFormatWithSampleRate:16000 channels:1];
+  converter_ = [[AVAudioConverter alloc] initFromFormat:[input inputFormatForBus:0] toFormat:output_format];
+  [input installTapOnBus:0 bufferSize:480 format:nil block:^(AVAudioPCMBuffer* buffer, AVAudioTime*) {
+    if (buffer.floatChannelData == nullptr || converter_ == nil) return;
+    AVAudioPCMBuffer* converted = [[AVAudioPCMBuffer alloc] initWithPCMFormat:output_format frameCapacity:160];
+    __block BOOL consumed = NO;
+    NSError* conversion_error = nil;
+    AVAudioConverterOutputStatus conversion_status = [converter_ convertToBuffer:converted error:&conversion_error withInputFromBlock:^AVAudioBuffer*(AVAudioPacketCount, AVAudioConverterInputStatus* status) {
+      if (consumed) { *status = AVAudioConverterInputStatus_NoDataNow; return nil; }
+      consumed = YES; *status = AVAudioConverterInputStatus_HaveData; return buffer;
+    }];
+    if (conversion_status == AVAudioConverterOutputStatus_Error || conversion_error != nil) return;
+    const float* data = converted.floatChannelData[0];
     std::vector<float> frame(160, 0.0f);
-    const std::size_t count = std::min<std::size_t>(160, buffer.frameLength);
+    const std::size_t count = std::min<std::size_t>(160, converted.frameLength);
     std::copy_n(data, count, frame.data());
     const auto start = std::chrono::steady_clock::now();
     try {
@@ -278,6 +334,12 @@ struct Metrics {
       metrics_.input_rms.store(std::sqrt(input_energy / std::max<std::size_t>(1, count)));
       metrics_.output_rms.store(std::sqrt(output_energy / std::max<std::size_t>(1, enhanced.sample_count())));
       metrics_.frames.fetch_add(1); pool_->reset();
+      if (recording_) {
+        std::lock_guard<std::mutex> record_lock(recording_mutex_);
+        raw_recording_.insert(raw_recording_.end(), data, data + count);
+        bypass_recording_.insert(bypass_recording_.end(), data, data + count);
+        enhanced_recording_.insert(enhanced_recording_.end(), enhanced.samples().begin(), enhanced.samples().end());
+      }
       std::lock_guard<std::mutex> lock(metrics_.waveform_mutex);
       metrics_.waveform.assign(data, data + count);
       metrics_.output_waveform = enhanced.samples();
