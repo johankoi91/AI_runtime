@@ -74,12 +74,10 @@ std::size_t MemoryPool::align_up(std::size_t value, std::size_t alignment) {
 MemoryPool::Chunk& MemoryPool::reserve_chunk(
     std::size_t min_bytes,
     std::size_t alignment) {
-  // 先尝试复用最后一个 chunk。
-  if (!chunks_.empty()) {
-    Chunk& current = chunks_.back();
-    const std::size_t aligned_offset = align_up(current.offset, alignment);
-    if ((aligned_offset + min_bytes) <= current.capacity) {
-      return current;
+  for (Chunk& chunk : chunks_) {
+    const std::size_t aligned_offset = align_up(chunk.offset, alignment);
+    if ((aligned_offset + min_bytes) <= chunk.capacity) {
+      return chunk;
     }
   }
 

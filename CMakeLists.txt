@@ -56,6 +56,7 @@ target_link_libraries(mini_runtime PRIVATE ZLIB::ZLIB)
 
 if(APPLE)
   target_link_libraries(mini_runtime PRIVATE "-framework Metal" "-framework Foundation")
+  target_compile_options(mini_runtime PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
 endif()
 
 if(MSVC)
@@ -99,6 +100,7 @@ set_target_properties(hush_quality PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT
 if(APPLE)
   add_executable(hush_interference_demo apps/hush_interference_demo.mm)
   target_link_libraries(hush_interference_demo PRIVATE mini_runtime "-framework AVFoundation")
+  target_compile_options(hush_interference_demo PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
   set_target_properties(hush_interference_demo PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
 endif()
 
@@ -116,9 +118,11 @@ if(APPLE)
   )
   add_executable(hush_mic_demo apps/hush_mic_demo.mm)
   target_link_libraries(hush_mic_demo PRIVATE mini_runtime "-framework AVFoundation")
+  target_compile_options(hush_mic_demo PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
   set_target_properties(hush_mic_demo PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
   add_executable(hush_mic_ui apps/hush_mic_ui.mm)
   target_link_libraries(hush_mic_ui PRIVATE mini_runtime "-framework AVFoundation" "-framework AppKit")
+  target_compile_options(hush_mic_ui PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
   set_target_properties(hush_mic_ui PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin
     MACOSX_BUNDLE TRUE
@@ -133,6 +137,9 @@ if(APPLE)
   else()
     message(WARNING "HUSH_MODEL_BUNDLE_PATH does not exist; app will require HUSH_MODEL_BUNDLE at runtime")
   endif()
+  add_custom_command(TARGET hush_mic_ui POST_BUILD
+    COMMAND /usr/bin/codesign --force --sign -
+      --identifier com.airuntime.hush-metal "$<TARGET_BUNDLE_DIR:hush_mic_ui>")
 endif()
 
 include(CTest)
@@ -144,4 +151,12 @@ if(BUILD_TESTING)
     RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin
   )
   add_test(NAME mini_runtime_tests COMMAND ${PROJECT_BINARY_DIR}/bin/mini_runtime_tests)
+  if(APPLE)
+    add_executable(hush_memory_tests tests/hush_memory_tests.mm)
+    target_link_libraries(hush_memory_tests PRIVATE mini_runtime "-framework Foundation")
+    target_compile_options(hush_memory_tests PRIVATE -fobjc-arc)
+    set_target_properties(hush_memory_tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
+    add_test(NAME hush_memory_tests COMMAND ${PROJECT_BINARY_DIR}/bin/hush_memory_tests)
+    set_tests_properties(hush_memory_tests PROPERTIES SKIP_RETURN_CODE 77)
+  endif()
 endif()

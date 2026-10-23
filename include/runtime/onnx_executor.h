@@ -12,6 +12,7 @@ namespace runtime {
 class OnnxExecutor {
  public:
   explicit OnnxExecutor(const Backend& backend) : backend_(backend) {}
+  void prepare(const OnnxGraph& graph);
 
   std::unordered_map<std::string, Tensor> run(
       const OnnxGraph& graph,
@@ -25,6 +26,8 @@ class OnnxExecutor {
 
  private:
   const Backend& backend_;
+  std::unordered_map<const OnnxGraph*, OnnxExecutionPlan> plans_;
+  std::unordered_map<const OnnxGraph*, std::unordered_map<std::string, Tensor>> initializers_;
 };
 
 }  // namespace runtime

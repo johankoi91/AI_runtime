@@ -72,8 +72,8 @@ Tensor gru_step(
     }
     update = 1.0f / (1.0f + std::exp(-update));
     reset = 1.0f / (1.0f + std::exp(-reset));
-    candidate = std::tanh(candidate + reset * recurrent_candidate);
-    output_data[unit] = update * hidden_data[unit] + (1.0f - update) * candidate;
+    candidate = std::tanh(candidate + recurrent_candidate);
+    output_data[unit] = (1.0f - update) * hidden_data[unit] + update * candidate;
   }
   return output;
 }

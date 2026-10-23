@@ -295,19 +295,48 @@ Tensor run_gru_step(const Backend& backend, const OnnxNode& node,
       initial_hidden.shape() != Shape{1, 1, hidden_size} || sequence.shape()[2] != input_size) {
     throw std::runtime_error("stage 15 GRU tensor shapes are unsupported");
   }
-  std::vector<float> bias_values(3 * hidden_size);
-  for (std::size_t index = 0; index < bias_values.size(); ++index) {
-    bias_values[index] = biases.data<float>()[index] + biases.data<float>()[3 * hidden_size + index];
-  }
-  Tensor hidden = Tensor::from_vector({hidden_size}, std::vector<float>(
-      initial_hidden.data<float>(), initial_hidden.data<float>() + hidden_size));
-  Tensor weights = Tensor::from_vector({3 * hidden_size, input_size}, std::vector<float>(
-      input_weights.data<float>(), input_weights.data<float>() + 3 * hidden_size * input_size));
-  Tensor recurrent = Tensor::from_vector({3 * hidden_size, hidden_size}, std::vector<float>(
-      hidden_weights.data<float>(), hidden_weights.data<float>() + 3 * hidden_size * hidden_size));
-  Tensor bias = Tensor::from_vector({3 * hidden_size}, bias_values);
   const std::size_t time_steps = sequence.shape()[0];
-  Tensor output = backend.gru_sequence(sequence, initial_hidden, input_weights, hidden_weights, biases, pool);
+  Tensor output = pool.allocate_tensor({time_steps, 1, hidden_size});
+  std::vector<float> hidden(initial_hidden.data<float>(), initial_hidden.data<float>() + hidden_size);
+  const float* input_data = sequence.data<float>();
+  const float* input_data_weights = input_weights.data<float>();
+  const float* hidden_data_weights = hidden_weights.data<float>();
+  const float* bias_data = biases.data<float>();
+  bool linear_before_reset = false;
+  for (const auto& attribute : node.attributes) {
+    if (attribute.name == "linear_before_reset") linear_before_reset = attribute.integer != 0;
+  }
+  for (std::size_t time = 0; time < time_steps; ++time) {
+    std::vector<float> next(hidden_size, 0.0f);
+    for (std::size_t unit = 0; unit < hidden_size; ++unit) {
+      float update = bias_data[unit] + bias_data[3 * hidden_size + unit];
+      float reset = bias_data[hidden_size + unit] + bias_data[4 * hidden_size + unit];
+      float candidate = bias_data[2 * hidden_size + unit];
+      float recurrent_candidate = 0.0f;
+      const float* input = input_data + time * input_size;
+      for (std::size_t index = 0; index < input_size; ++index) {
+        update += input_data_weights[unit * input_size + index] * input[index];
+        reset += input_data_weights[(hidden_size + unit) * input_size + index] * input[index];
+        candidate += input_data_weights[(2 * hidden_size + unit) * input_size + index] * input[index];
+      }
+      for (std::size_t index = 0; index < hidden_size; ++index) {
+        update += hidden_data_weights[unit * hidden_size + index] * hidden[index];
+        reset += hidden_data_weights[(hidden_size + unit) * hidden_size + index] * hidden[index];
+        recurrent_candidate += hidden_data_weights[(2 * hidden_size + unit) * hidden_size + index] * hidden[index];
+      }
+      update = 1.0f / (1.0f + std::exp(-update));
+      reset = 1.0f / (1.0f + std::exp(-reset));
+      if (linear_before_reset) {
+        candidate += reset * (recurrent_candidate + bias_data[5 * hidden_size + unit]);
+      } else {
+        candidate += reset * recurrent_candidate + bias_data[5 * hidden_size + unit];
+      }
+      candidate = std::tanh(candidate);
+      next[unit] = (1.0f - update) * hidden[unit] + update * candidate;
+      output.data<float>()[time * hidden_size + unit] = next[unit];
+    }
+    hidden = std::move(next);
+  }
   return cpu::reshape(output, {time_steps, 1, 1, hidden_size});
 }
 
@@ -315,7 +344,19 @@ Tensor run_gru_step(const Backend& backend, const OnnxNode& node,
 
 std::unordered_map<std::string, Tensor> OnnxExecutor::run(
     const OnnxGraph& graph, const std::unordered_map<std::string, Tensor>& inputs, MemoryPool& pool) const {
+  const auto found = plans_.find(&graph);
+  if (found != plans_.end()) return run(graph, found->second, inputs, pool);
   return run(graph, OnnxExecutionPlan::compile(graph), inputs, pool);
+}
+
+void OnnxExecutor::prepare(const OnnxGraph& graph) {
+  std::unordered_map<std::string, Tensor> tensors;
+  tensors.reserve(graph.initializers.size());
+  for (const WeightTensor& initializer : graph.initializers) {
+    tensors.emplace(initializer.name, Tensor::from_vector(initializer.shape, initializer.values));
+  }
+  plans_.insert_or_assign(&graph, OnnxExecutionPlan::compile(graph));
+  initializers_.insert_or_assign(&graph, std::move(tensors));
 }
 
 std::unordered_map<std::string, Tensor> OnnxExecutor::run(
@@ -324,8 +365,13 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
     const std::unordered_map<std::string, Tensor>& inputs,
     MemoryPool& pool) const {
   std::unordered_map<std::string, Tensor> tensors = inputs;
-  for (const WeightTensor& initializer : graph.initializers) {
-    tensors[initializer.name] = Tensor::from_vector(initializer.shape, initializer.values);
+  const auto prepared = initializers_.find(&graph);
+  if (prepared != initializers_.end()) {
+    for (const auto& initializer : prepared->second) tensors[initializer.first] = initializer.second;
+  } else {
+    for (const WeightTensor& initializer : graph.initializers) {
+      tensors[initializer.name] = Tensor::from_vector(initializer.shape, initializer.values);
+    }
   }
   for (const PlannedNode& planned : plan.nodes()) {
     const OnnxNode& node = graph.nodes[planned.graph_index];

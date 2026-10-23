@@ -4,6 +4,7 @@
 #include <cctype>
 #include <sstream>
 #include <algorithm>
+#include <cmath>
 
 namespace runtime {
 
@@ -102,8 +103,10 @@ HushConfig HushConfig::from_ini(const std::string& ini) {
     else if (key == "fft_size") config.fft_size = parse_size(key, value);
     else if (key == "hop_size") config.hop_size = parse_size(key, value);
     else if (key == "nb_erb") config.erb_bands = parse_size(key, value);
+    else if (key == "min_nb_erb_freqs") config.min_nb_erb_freqs = parse_size(key, value);
     else if (key == "nb_df") config.df_bins = parse_size(key, value);
     else if (key == "df_order") config.df_order = parse_size(key, value);
+    else if (key == "norm_tau") config.norm_tau = std::stof(value);
   }
   config.validate();
   return config;
@@ -113,6 +116,9 @@ void HushConfig::validate() const {
   if (sample_rate == 0 || fft_size == 0 || hop_size == 0 || hop_size > fft_size ||
       erb_bands == 0 || df_bins == 0 || df_order == 0) {
     throw std::invalid_argument("invalid Hush model configuration");
+  }
+  if (min_nb_erb_freqs == 0 || !(norm_tau > 0.0f) || !std::isfinite(norm_tau)) {
+    throw std::invalid_argument("invalid Hush normalization configuration");
   }
 }
 

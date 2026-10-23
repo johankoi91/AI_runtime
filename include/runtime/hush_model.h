@@ -13,8 +13,10 @@ struct HushConfig {
   std::size_t fft_size = 320;
   std::size_t hop_size = 160;
   std::size_t erb_bands = 32;
+  std::size_t min_nb_erb_freqs = 2;
   std::size_t df_bins = 64;
   std::size_t df_order = 5;
+  float norm_tau = 1.0f;
 
   static HushConfig from_ini(const std::string& ini);
   void validate() const;

@@ -159,6 +159,20 @@ void test_memory_pool_reuse(TestContext& ctx) {
   ctx.expect_true(
       pool.chunk_count() == chunk_count_before_reset,
       "pool should reuse existing chunks after reset");
+
+  runtime::MemoryPool multi_chunk_pool(256);
+  std::vector<runtime::Tensor> first_round;
+  for (int index = 0; index < 3; ++index) {
+    first_round.push_back(multi_chunk_pool.allocate_tensor({8, 8}));
+  }
+  const std::size_t multi_chunk_count = multi_chunk_pool.chunk_count();
+  multi_chunk_pool.reset();
+  for (int index = 0; index < 3; ++index) {
+    first_round.push_back(multi_chunk_pool.allocate_tensor({8, 8}));
+  }
+  ctx.expect_true(
+      multi_chunk_pool.chunk_count() == multi_chunk_count,
+      "pool should reuse all chunks after reset");
 }
 
 void test_graph_execution(TestContext& ctx) {

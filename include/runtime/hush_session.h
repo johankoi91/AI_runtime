@@ -57,6 +57,13 @@ class HushStreamSession {
       const std::string& mask_output_name,
       const Backend& backend,
       MemoryPool& pool);
+  std::vector<AudioFrame> process_audio_batch(
+      const std::vector<AudioFrame>& frames,
+      const std::string& erb_input_name,
+      const std::string& df_input_name,
+      const std::string& mask_output_name,
+      const Backend& backend,
+      MemoryPool& pool);
   void reset();
 
   std::size_t frame_index() const { return frame_index_; }
@@ -69,6 +76,10 @@ class HushStreamSession {
   std::vector<StateBinding> encoder_state_bindings_;
   std::unordered_map<std::string, Tensor> state_;
   HushFrontend frontend_;
+  std::vector<float> df_history_;
+  std::vector<float> synthesis_history_;
+  std::vector<float> erb_feature_history_;
+  std::vector<float> df_feature_history_;
   std::size_t frame_index_ = 0;
 };
 

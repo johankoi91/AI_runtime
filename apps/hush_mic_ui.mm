@@ -295,13 +295,20 @@ struct Metrics {
       runtime::HushStreamSession offline_session(*self->model_, *self->backend_, {});
       runtime::MemoryPool offline_pool;
       std::vector<float> enhanced; enhanced.reserve(raw.size());
-      for (std::size_t offset = 0; offset < raw.size(); offset += 160) {
-        std::vector<float> frame(160, 0.0f);
-        const std::size_t count = std::min<std::size_t>(160, raw.size() - offset);
-        std::copy_n(raw.data() + offset, count, frame.data());
-        const auto output = offline_session.process_audio(runtime::AudioFrame::mono_16k(std::move(frame)),
-                                                           "feat_erb", "feat_spec", "m", *self->backend_, offline_pool);
-        enhanced.insert(enhanced.end(), output.samples().begin(), output.samples().end());
+      for (std::size_t offset = 0; offset < raw.size(); offset += 160 * 32) {
+        const std::size_t batch_count = std::min<std::size_t>(32, (raw.size() - offset + 159) / 160);
+        std::vector<runtime::AudioFrame> frames;
+        frames.reserve(batch_count);
+        for (std::size_t frame_index = 0; frame_index < batch_count; ++frame_index) {
+          std::vector<float> samples(160, 0.0f);
+          const std::size_t frame_offset = offset + frame_index * 160;
+          const std::size_t count = std::min<std::size_t>(160, raw.size() - frame_offset);
+          std::copy_n(raw.data() + frame_offset, count, samples.data());
+          frames.push_back(runtime::AudioFrame::mono_16k(std::move(samples)));
+        }
+        const auto outputs = offline_session.process_audio_batch(frames, "feat_erb", "feat_spec", "m",
+                                                                  *self->backend_, offline_pool);
+        for (const auto& output : outputs) enhanced.insert(enhanced.end(), output.samples().begin(), output.samples().end());
         offline_pool.reset();
       }
       enhanced.resize(raw.size());
@@ -426,9 +433,14 @@ struct Metrics {
     return;
   }
   if (!session_) { status_label_.stringValue = @"Choose a model first."; return; }
-  if (@available(macOS 14.0, *)) {
+  const AVAuthorizationStatus permission = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio];
+  if (permission == AVAuthorizationStatusAuthorized) {
+    [self startMicrophoneEngine];
+    return;
+  }
+  if (permission == AVAuthorizationStatusNotDetermined) {
     status_label_.stringValue = @"Requesting microphone access…";
-    [AVAudioApplication requestRecordPermissionWithCompletionHandler:^(BOOL granted) {
+    [AVCaptureDevice requestAccessForMediaType:AVMediaTypeAudio completionHandler:^(BOOL granted) {
       dispatch_async(dispatch_get_main_queue(), ^{
         if (!granted) {
           self->status_label_.stringValue = @"Microphone access denied in System Settings.";
@@ -439,7 +451,7 @@ struct Metrics {
     }];
     return;
   }
-  [self startMicrophoneEngine];
+  status_label_.stringValue = @"Microphone access denied in System Settings.";
 }
 
 - (void)startMicrophoneEngine {
@@ -451,6 +463,7 @@ struct Metrics {
   AVAudioFormat* input_format = [input inputFormatForBus:0];
   capture_format_ = input_format;
   [input installTapOnBus:0 bufferSize:480 format:input_format block:^(AVAudioPCMBuffer* buffer, AVAudioTime*) {
+    @autoreleasepool {
     if (buffer.floatChannelData == nullptr || converter_ == nil) return;
     if (recording_.load()) {
       std::lock_guard<std::mutex> lock(recording_mutex_);
@@ -497,6 +510,7 @@ struct Metrics {
         std::lock_guard<std::mutex> error_lock(metrics_.error_mutex);
         metrics_.error = error.what();
       }
+    }
     }
   }];
   NSError* error = nil;
