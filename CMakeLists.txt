@@ -108,6 +108,12 @@ if(APPLE)
   add_executable(hush_mic_demo apps/hush_mic_demo.mm)
   target_link_libraries(hush_mic_demo PRIVATE mini_runtime "-framework AVFoundation")
   set_target_properties(hush_mic_demo PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
+  add_executable(hush_mic_ui apps/hush_mic_ui.mm)
+  target_link_libraries(hush_mic_ui PRIVATE mini_runtime "-framework AVFoundation" "-framework AppKit")
+  set_target_properties(hush_mic_ui PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin
+    MACOSX_BUNDLE TRUE
+    MACOSX_BUNDLE_INFO_PLIST ${PROJECT_SOURCE_DIR}/apps/HushMicUI-Info.plist)
 endif()
 
 include(CTest)
