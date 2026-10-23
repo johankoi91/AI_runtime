@@ -29,6 +29,7 @@ struct Metrics {
   std::atomic<double> latency_ms{0.0};
   std::atomic<double> input_rms{0.0};
   std::atomic<double> output_rms{0.0};
+  std::mutex error_mutex;
   std::mutex waveform_mutex;
   std::vector<float> waveform;
   std::vector<float> output_waveform;
@@ -81,9 +82,9 @@ struct Metrics {
   AVAudioPlayer* player_;
   AVAudioConverter* converter_;
   AVAudioFormat* capture_format_;
-  AVAudioFile* native_capture_file_;
   std::atomic_bool recording_;
   std::mutex recording_mutex_;
+  std::vector<float> native_recording_;
   std::vector<float> raw_recording_;
   std::vector<float> bypass_recording_;
   std::vector<float> enhanced_recording_;
@@ -228,72 +229,66 @@ struct Metrics {
       std::lock_guard<std::mutex> lock(recording_mutex_);
       raw_recording_.clear(); bypass_recording_.clear(); enhanced_recording_.clear();
     }
-    recording_.store(true);
-    NSError* file_error = nil;
-    native_capture_file_ = [[AVAudioFile alloc] initForWriting:
-        [NSURL fileURLWithPath:@"/tmp/hush-mic-native.caf"]
-        settings:capture_format_.settings error:&file_error];
-    if (native_capture_file_ == nil || file_error != nil) {
-      recording_.store(false);
-      demo_label_.stringValue = file_error.localizedDescription ?: @"Could not open native capture file";
-      return;
+    {
+      std::lock_guard<std::mutex> lock(recording_mutex_);
+      native_recording_.clear();
+      native_recording_.reserve(static_cast<std::size_t>(capture_format_.sampleRate * 60.0));
     }
+    recording_.store(true);
     record_button_.title = @"Stop A/B Recording";
     demo_label_.stringValue = @"A/B test recording… click Stop when finished";
     return;
   }
-  // Stop the audio tap before closing the native file. This makes the file
-  // boundary deterministic and prevents the offline reader racing the tap.
+  // Stop the audio tap before taking the in-memory snapshot. This makes the
+  // recording boundary deterministic and removes file I/O from the callback.
   recording_.store(false);
   [engine_.inputNode removeTapOnBus:0];
   [engine_ stop];
   engine_ = nil;
-  AVAudioFile* native_file = native_capture_file_;
-  native_capture_file_ = nil;
-  if (native_file == nil) {
+  auto native_samples = std::make_shared<std::vector<float>>();
+  {
+    std::lock_guard<std::mutex> lock(recording_mutex_);
+    *native_samples = native_recording_;
+  }
+  if (native_samples->empty()) {
     demo_label_.stringValue = @"A/B test: no native audio was captured";
     return;
   }
+  const double native_sample_rate = capture_format_.sampleRate;
   record_button_.title = @"Record A/B Test";
   demo_label_.stringValue = @"A/B test: processing the complete recording…";
   dispatch_async(recording_queue_, ^{
     try {
-      const AVAudioFrameCount native_frames = native_file.length;
-      if (native_frames == 0) throw std::runtime_error("native capture contains no frames");
-      // AVAudioFile may return a partial buffer for a large read. Read in
-      // bounded chunks and feed every chunk to the converter so long takes
-      // cannot be silently truncated.
+      const AVAudioFrameCount native_frames = native_samples->size();
       NSMutableArray<AVAudioPCMBuffer*>* native_chunks = [NSMutableArray array];
-      AVAudioFrameCount frames_read = 0;
-      NSError* read_error = nil;
-      while (frames_read < native_frames) {
+      AVAudioFormat* native_format = [[AVAudioFormat alloc]
+          initStandardFormatWithSampleRate:native_sample_rate channels:1];
+      for (AVAudioFrameCount offset = 0; offset < native_frames; offset += 4096) {
+        const AVAudioFrameCount count = std::min<AVAudioFrameCount>(4096, native_frames - offset);
         AVAudioPCMBuffer* chunk = [[AVAudioPCMBuffer alloc]
-            initWithPCMFormat:native_file.processingFormat frameCapacity:4096];
-        if (![native_file readIntoBuffer:chunk error:&read_error]) {
-          throw std::runtime_error(error_message(read_error, "could not read native capture"));
-        }
-        if (chunk.frameLength == 0) break;
+            initWithPCMFormat:native_format frameCapacity:count];
+        chunk.frameLength = count;
+        std::copy_n(native_samples->data() + offset, count, chunk.floatChannelData[0]);
         [native_chunks addObject:chunk];
-        frames_read += chunk.frameLength;
       }
-      if (frames_read == 0) throw std::runtime_error("native capture read returned no frames");
       AVAudioFormat* target_format = [[AVAudioFormat alloc] initStandardFormatWithSampleRate:16000 channels:1];
       AVAudioConverter* offline_converter = [[AVAudioConverter alloc]
-          initFromFormat:native_file.processingFormat toFormat:target_format];
+          initFromFormat:native_format toFormat:target_format];
       const AVAudioFrameCount target_capacity = static_cast<AVAudioFrameCount>(
-          std::ceil(frames_read * 16000.0 / native_file.processingFormat.sampleRate) + 320);
+          std::ceil(native_frames * 16000.0 / native_sample_rate) + 320);
       AVAudioPCMBuffer* target_buffer = [[AVAudioPCMBuffer alloc]
           initWithPCMFormat:target_format frameCapacity:target_capacity];
       __block NSUInteger chunk_index = 0;
-      if ([offline_converter convertToBuffer:target_buffer error:&read_error withInputFromBlock:^AVAudioBuffer*(AVAudioPacketCount, AVAudioConverterInputStatus* status) {
+      NSError* conversion_error = nil;
+      if ([offline_converter convertToBuffer:target_buffer error:&conversion_error withInputFromBlock:^AVAudioBuffer*(AVAudioPacketCount, AVAudioConverterInputStatus* status) {
             if (chunk_index >= native_chunks.count) {
               *status = AVAudioConverterInputStatus_EndOfStream;
               return nil;
             }
             *status = AVAudioConverterInputStatus_HaveData;
             return native_chunks[chunk_index++];
-          }] == AVAudioConverterOutputStatus_Error || read_error != nil) {
-        throw std::runtime_error(error_message(read_error, "could not convert native capture"));
+          }] == AVAudioConverterOutputStatus_Error || conversion_error != nil) {
+        throw std::runtime_error(error_message(conversion_error, "could not convert native capture"));
       }
       std::vector<float> raw(target_buffer.frameLength);
       std::copy_n(target_buffer.floatChannelData[0], target_buffer.frameLength, raw.data());
@@ -384,8 +379,18 @@ struct Metrics {
 - (void)playHush:(id)sender { (void)sender; [self playDemoFile:@"/tmp/hush-mic-enhanced.wav"]; }
 - (void)playDemoFile:(NSString*)path {
   if (![[NSFileManager defaultManager] fileExistsAtPath:path]) { demo_label_.stringValue = @"Demo: generate the files first"; return; }
-  player_ = [[AVAudioPlayer alloc] initWithContentsOfURL:[NSURL fileURLWithPath:path] error:nil];
-  [player_ play];
+  NSError* error = nil;
+  player_ = [[AVAudioPlayer alloc] initWithContentsOfURL:[NSURL fileURLWithPath:path] error:&error];
+  if (player_ == nil || error != nil) {
+    demo_label_.stringValue = error.localizedDescription ?: @"Could not open audio for playback";
+    return;
+  }
+  [player_ prepareToPlay];
+  if (![player_ play]) {
+    demo_label_.stringValue = @"Could not start audio playback";
+    return;
+  }
+  demo_label_.stringValue = [NSString stringWithFormat:@"Playing %@ · %.2fs", path.lastPathComponent, player_.duration];
 }
 
 - (void)chooseModel:(id)sender {
@@ -412,8 +417,33 @@ struct Metrics {
 
 - (void)toggle:(id)sender {
   (void)sender;
-  if (engine_ != nil) { [engine_ stop]; [engine_.inputNode removeTapOnBus:0]; engine_ = nil; start_button_.title = @"Start Microphone"; status_label_.stringValue = @"Stopped"; return; }
+  if (engine_ != nil) {
+    [engine_.inputNode removeTapOnBus:0];
+    [engine_ stop];
+    engine_ = nil;
+    start_button_.title = @"Start Microphone";
+    status_label_.stringValue = @"Stopped";
+    return;
+  }
   if (!session_) { status_label_.stringValue = @"Choose a model first."; return; }
+  if (@available(macOS 14.0, *)) {
+    status_label_.stringValue = @"Requesting microphone access…";
+    [AVAudioApplication requestRecordPermissionWithCompletionHandler:^(BOOL granted) {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        if (!granted) {
+          self->status_label_.stringValue = @"Microphone access denied in System Settings.";
+          return;
+        }
+        [self startMicrophoneEngine];
+      });
+    }];
+    return;
+  }
+  [self startMicrophoneEngine];
+}
+
+- (void)startMicrophoneEngine {
+  if (engine_ != nil || !session_) return;
   engine_ = [[AVAudioEngine alloc] init];
   AVAudioInputNode* input = engine_.inputNode;
   AVAudioFormat* output_format = [[AVAudioFormat alloc] initStandardFormatWithSampleRate:16000 channels:1];
@@ -423,9 +453,14 @@ struct Metrics {
   [input installTapOnBus:0 bufferSize:480 format:input_format block:^(AVAudioPCMBuffer* buffer, AVAudioTime*) {
     if (buffer.floatChannelData == nullptr || converter_ == nil) return;
     if (recording_.load()) {
-      NSError* write_error = nil;
-      if (![native_capture_file_ writeFromBuffer:buffer error:&write_error] && write_error != nil) {
-        metrics_.error = error_message(write_error, "could not write native capture");
+      std::lock_guard<std::mutex> lock(recording_mutex_);
+      const AVAudioChannelCount channels = buffer.format.channelCount;
+      for (AVAudioFrameCount frame = 0; frame < buffer.frameLength; ++frame) {
+        float sample = 0.0f;
+        for (AVAudioChannelCount channel = 0; channel < channels; ++channel) {
+          sample += buffer.floatChannelData[channel][frame];
+        }
+        native_recording_.push_back(sample / std::max<AVAudioChannelCount>(1, channels));
       }
       return;
     }
@@ -458,7 +493,10 @@ struct Metrics {
         std::lock_guard<std::mutex> lock(metrics_.waveform_mutex);
         metrics_.waveform = frame;
         metrics_.output_waveform = enhanced.samples();
-      } catch (const std::exception& error) { metrics_.error = error.what(); }
+      } catch (const std::exception& error) {
+        std::lock_guard<std::mutex> error_lock(metrics_.error_mutex);
+        metrics_.error = error.what();
+      }
     }
   }];
   NSError* error = nil;
@@ -473,7 +511,12 @@ struct Metrics {
                                 metrics_.frames.load(), latency, metrics_.input_rms.load(), metrics_.output_rms.load()];
   [waveform_view_ setNeedsDisplay:YES];
   [output_waveform_view_ setNeedsDisplay:YES];
-  if (!metrics_.error.empty()) status_label_.stringValue = [NSString stringWithUTF8String:metrics_.error.c_str()];
+  std::string error;
+  {
+    std::lock_guard<std::mutex> error_lock(metrics_.error_mutex);
+    error = metrics_.error;
+  }
+  if (!error.empty()) status_label_.stringValue = [NSString stringWithUTF8String:error.c_str()];
 }
 @end
 
