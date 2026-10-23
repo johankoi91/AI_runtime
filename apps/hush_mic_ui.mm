@@ -244,12 +244,20 @@ struct Metrics {
         offline_pool.reset();
       }
       enhanced.resize(raw.size());
+      float peak = 0.0f;
+      for (float value : enhanced) peak = std::max(peak, std::fabs(value));
+      const bool clipped = peak > 0.98f;
+      if (clipped) {
+        const float scale = 0.98f / peak;
+        for (float& value : enhanced) value *= scale;
+      }
       std::lock_guard<std::mutex> lock(self->recording_mutex_);
       self->enhanced_recording_ = enhanced;
       runtime::write_wav_mono16("/tmp/hush-mic-raw.wav", self->raw_recording_);
       runtime::write_wav_mono16("/tmp/hush-mic-bypass.wav", self->bypass_recording_);
       runtime::write_wav_mono16("/tmp/hush-mic-enhanced.wav", self->enhanced_recording_);
-      dispatch_async(dispatch_get_main_queue(), ^{ self->demo_label_.stringValue = @"A/B test ready: Raw, Bypass, Hush"; });
+      const double seconds = static_cast<double>(raw.size()) / 16000.0;
+      dispatch_async(dispatch_get_main_queue(), ^{ self->demo_label_.stringValue = [NSString stringWithFormat:@"A/B ready · %.2fs · %@ peak protected", seconds, clipped ? @"Hush" : @"No"]; });
     } catch (const std::exception& error) {
       const std::string message = error.what();
       dispatch_async(dispatch_get_main_queue(), ^{ self->demo_label_.stringValue = [NSString stringWithUTF8String:message.c_str()]; });
