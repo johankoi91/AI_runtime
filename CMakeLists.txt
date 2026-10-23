@@ -96,6 +96,12 @@ add_executable(hush_quality apps/hush_quality.cpp)
 target_link_libraries(hush_quality PRIVATE mini_runtime)
 set_target_properties(hush_quality PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
 
+if(APPLE)
+  add_executable(hush_interference_demo apps/hush_interference_demo.mm)
+  target_link_libraries(hush_interference_demo PRIVATE mini_runtime "-framework AVFoundation")
+  set_target_properties(hush_interference_demo PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
+endif()
+
 add_executable(hush_inspect apps/hush_inspect.cpp)
 target_link_libraries(hush_inspect PRIVATE mini_runtime)
 set_target_properties(hush_inspect PROPERTIES
