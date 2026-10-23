@@ -1,6 +1,6 @@
 # mini-llm-runtime
 
-一个从零实现的最小 CPU 推理 Runtime，用来学习 runtime 最核心的几层能力：
+一个从零实现、包含 CPU/Metal 与 Hush 音频应用的小型推理 Runtime，用来学习 runtime 最核心的几层能力：
 
 - Tensor 存储和 layout
 - 基础 CPU kernel
@@ -9,7 +9,9 @@
 - Execution Graph
 - 后续扩展到 KV Cache 和最小 decoder path
 
-## 当前状态
+当前源码的零基础阅读入口是 [从 0 到 1 源码课程](./docs/runtime-from-zero/README.md)。课程区分已实现路径、简化实现和仍未完成的工程能力。下面的阶段清单保留了历史开发过程，部分早期说明与数值已被后续修复替代。
+
+## 实现历史
 
 当前仓库已经不是空骨架，而是一个能本地编译、运行和测试的最小闭环。
 
@@ -254,22 +256,16 @@ docs/                   学习路线和任务文档
 
 ## 学习文档
 
+- [从 0 到 1 源码课程：8 课与完整源码地图](./docs/runtime-from-zero/README.md)
 - [Runtime 学习路线图](./docs/runtime-learning-roadmap.md)
 - [第 1 周任务清单](./docs/week-1-task-checklist.md)
 - [源码阅读 Guide](./docs/source-reading-guide.md)
 
-路线图已经按当前仓库状态对齐过了。  
-也就是说，仓库里已经提前有了一部分第 2-3 周的内容，而第 1 周更适合做“补齐缺口、加深理解、增强测试”。
+前两份路线与任务清单保留了早期学习规划，包括尚未实现的 KV Cache 等方向。当前实现与函数调用以新源码课程为主；早期源码 Guide 可补充最小 CPU 部分的细节。
 
 ## 当前最值得做的下一步
 
-如果你按路线继续推进，最建议优先做这些：
-
-1. 补 `mul`
-2. 补强 `Tensor` 的 `view / stride / offset` 测试
-3. 写 `docs/tensor-layout-notes.md`
-4. 给 `matmul` 加更完整的错误路径测试
-5. 再进入 blocked `matmul`、benchmark、KV Cache
+学习时先从课程第 1 课跟踪两节点 demo，再依次阅读 Tensor/内存、CPU 算子、ONNX、Metal、Hush 与 App。工程继续演进时，应优先核对 Tensor 访问边界、基础 GRU 语义、ONNX 兼容范围和 CPU/GPU 调度，再扩展新模型。Mul 已实现，无需按旧任务清单重复开发。
 
 ## Hush Metal 移植阶段自测
 
@@ -314,13 +310,13 @@ HUSH_MODEL_BUNDLE=/tmp/hush-real-model.tar.gz HUSH_BACKEND=metal ./build/bin/hus
 
 ## 当前能力边界
 
-当前版本故意保持最小化，所以也有一些明确限制：
+当前版本已有 CPU/Metal 基础算子、当前 Hush ONNX bundle 的执行、macOS App、流式状态、内存回归和参考对照，同时仍有明确边界：
 
-- 目前主要围绕 `float32`
-- kernel 只支持很小的一组能力
-- `matmul` 目前只支持 contiguous 的 2D tensor
-- 还没有 `mul`、`softmax`、`rmsnorm`
-- 还没有 `KernelRegistry`
-- 还没有 `KVCache`
+- Tensor 主要围绕 `float32`，任意 stride、类型转换和访问边界支持不完整。
+- 手写 Graph 只有少量算子；ONNX 路径支持当前模型所需的算子、形状和属性子集。
+- Hush 数值与当前权重的参考计算已做过对照，但主讲保真与背景人声分离音质尚未达到目标。
+- Metal 仍有逐算子同步、CPU 执行分支和 Tensor/MTLBuffer 复制。
+- 基础 Backend GRU API 与 Hush ONNX GRU 路径不同，不能混用验收结论。
+- 尚无完整多精度、量化、成熟框架级全图内存规划与异步调度，也没有 KernelRegistry、KVCache、Attention 或 LLM decoder。
 
-这些限制不是问题，反而正适合拿来当学习入口。
+因此，“当前 Hush 运行链路已接通”不等于“通用成熟推理框架的工作全部完成”。

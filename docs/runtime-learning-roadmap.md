@@ -1,5 +1,7 @@
 # Runtime 学习路线图
 
+> 本文保留最初的规划，包含 Softmax、RoPE、KV Cache 等尚未实现的学习方向。阅读当前已实现的 CPU/Metal、ONNX、Hush 与 App，请使用 [从 0 到 1 源码课程](runtime-from-zero/README.md)。
+
 ## 目标
 
 这份文档的目标不是教你“怎么调一个现成框架”，而是帮你从零理解并实现一个最小但完整的 Runtime。
