@@ -80,6 +80,7 @@ struct Metrics {
   std::vector<float> bypass_recording_;
   std::vector<float> enhanced_recording_;
   std::vector<float> pending_audio_;
+  dispatch_queue_t recording_queue_;
   NSButton* start_button_;
   NSPopUpButton* backend_popup_;
   WaveformView* waveform_view_;
@@ -206,6 +207,7 @@ struct Metrics {
   [content addSubview:demo_label_];
   [window_ makeKeyAndOrderFront:nil];
   [NSTimer scheduledTimerWithTimeInterval:0.1 target:self selector:@selector(refreshUI:) userInfo:nil repeats:YES];
+  recording_queue_ = dispatch_queue_create("com.airuntime.hush.recording", DISPATCH_QUEUE_SERIAL);
 }
 
 - (void)recordComparison:(id)sender {
@@ -224,15 +226,35 @@ struct Metrics {
   }
   recording_ = false;
   record_button_.title = @"Record A/B Test";
-  try {
-    std::lock_guard<std::mutex> lock(recording_mutex_);
-    runtime::write_wav_mono16("/tmp/hush-mic-raw.wav", raw_recording_);
-    runtime::write_wav_mono16("/tmp/hush-mic-bypass.wav", bypass_recording_);
-    runtime::write_wav_mono16("/tmp/hush-mic-enhanced.wav", enhanced_recording_);
-    demo_label_.stringValue = @"A/B test ready: use Raw, Bypass, or Hush playback";
-  } catch (const std::exception& error) {
-    demo_label_.stringValue = [NSString stringWithUTF8String:error.what()];
-  }
+  demo_label_.stringValue = @"A/B test: processing the complete recording…";
+  dispatch_async(recording_queue_, ^{
+    try {
+      std::vector<float> raw;
+      { std::lock_guard<std::mutex> lock(self->recording_mutex_); raw = self->raw_recording_; }
+      runtime::HushStreamSession offline_session(*self->model_, *self->backend_, {});
+      runtime::MemoryPool offline_pool;
+      std::vector<float> enhanced; enhanced.reserve(raw.size());
+      for (std::size_t offset = 0; offset < raw.size(); offset += 160) {
+        std::vector<float> frame(160, 0.0f);
+        const std::size_t count = std::min<std::size_t>(160, raw.size() - offset);
+        std::copy_n(raw.data() + offset, count, frame.data());
+        const auto output = offline_session.process_audio(runtime::AudioFrame::mono_16k(std::move(frame)),
+                                                           "feat_erb", "feat_spec", "m", *self->backend_, offline_pool);
+        enhanced.insert(enhanced.end(), output.samples().begin(), output.samples().end());
+        offline_pool.reset();
+      }
+      enhanced.resize(raw.size());
+      std::lock_guard<std::mutex> lock(self->recording_mutex_);
+      self->enhanced_recording_ = enhanced;
+      runtime::write_wav_mono16("/tmp/hush-mic-raw.wav", self->raw_recording_);
+      runtime::write_wav_mono16("/tmp/hush-mic-bypass.wav", self->bypass_recording_);
+      runtime::write_wav_mono16("/tmp/hush-mic-enhanced.wav", self->enhanced_recording_);
+      dispatch_async(dispatch_get_main_queue(), ^{ self->demo_label_.stringValue = @"A/B test ready: Raw, Bypass, Hush"; });
+    } catch (const std::exception& error) {
+      const std::string message = error.what();
+      dispatch_async(dispatch_get_main_queue(), ^{ self->demo_label_.stringValue = [NSString stringWithUTF8String:message.c_str()]; });
+    }
+  });
 }
 
 - (void)generateInterferenceDemo:(id)sender {
@@ -330,6 +352,12 @@ struct Metrics {
       pending_audio_.erase(pending_audio_.begin(), pending_audio_.begin() + 160);
       const auto start = std::chrono::steady_clock::now();
       try {
+        if (recording_) {
+          std::lock_guard<std::mutex> record_lock(recording_mutex_);
+          raw_recording_.insert(raw_recording_.end(), frame.begin(), frame.end());
+          bypass_recording_.insert(bypass_recording_.end(), frame.begin(), frame.end());
+          continue;
+        }
         const auto enhanced = session_->process_audio(runtime::AudioFrame::mono_16k(frame),
                                       "feat_erb", "feat_spec", "m", *backend_, *pool_);
         const double latency = std::chrono::duration<double, std::milli>(
@@ -341,12 +369,6 @@ struct Metrics {
         metrics_.input_rms.store(std::sqrt(input_energy / frame.size()));
         metrics_.output_rms.store(std::sqrt(output_energy / std::max<std::size_t>(1, enhanced.sample_count())));
         metrics_.frames.fetch_add(1); pool_->reset();
-        if (recording_) {
-          std::lock_guard<std::mutex> record_lock(recording_mutex_);
-          raw_recording_.insert(raw_recording_.end(), frame.begin(), frame.end());
-          bypass_recording_.insert(bypass_recording_.end(), frame.begin(), frame.end());
-          enhanced_recording_.insert(enhanced_recording_.end(), enhanced.samples().begin(), enhanced.samples().end());
-        }
         std::lock_guard<std::mutex> lock(metrics_.waveform_mutex);
         metrics_.waveform = frame;
         metrics_.output_waveform = enhanced.samples();
