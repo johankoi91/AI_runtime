@@ -79,6 +79,7 @@ struct Metrics {
   std::vector<float> raw_recording_;
   std::vector<float> bypass_recording_;
   std::vector<float> enhanced_recording_;
+  std::vector<float> pending_audio_;
   NSButton* start_button_;
   NSPopUpButton* backend_popup_;
   WaveformView* waveform_view_;
@@ -313,7 +314,7 @@ struct Metrics {
   converter_ = [[AVAudioConverter alloc] initFromFormat:[input inputFormatForBus:0] toFormat:output_format];
   [input installTapOnBus:0 bufferSize:480 format:nil block:^(AVAudioPCMBuffer* buffer, AVAudioTime*) {
     if (buffer.floatChannelData == nullptr || converter_ == nil) return;
-    AVAudioPCMBuffer* converted = [[AVAudioPCMBuffer alloc] initWithPCMFormat:output_format frameCapacity:160];
+    AVAudioPCMBuffer* converted = [[AVAudioPCMBuffer alloc] initWithPCMFormat:output_format frameCapacity:512];
     __block BOOL consumed = NO;
     NSError* conversion_error = nil;
     AVAudioConverterOutputStatus conversion_status = [converter_ convertToBuffer:converted error:&conversion_error withInputFromBlock:^AVAudioBuffer*(AVAudioPacketCount, AVAudioConverterInputStatus* status) {
@@ -321,33 +322,35 @@ struct Metrics {
       consumed = YES; *status = AVAudioConverterInputStatus_HaveData; return buffer;
     }];
     if (conversion_status == AVAudioConverterOutputStatus_Error || conversion_error != nil) return;
-    const float* data = converted.floatChannelData[0];
-    std::vector<float> frame(160, 0.0f);
-    const std::size_t count = std::min<std::size_t>(160, converted.frameLength);
-    std::copy_n(data, count, frame.data());
-    const auto start = std::chrono::steady_clock::now();
-    try {
-      const auto enhanced = session_->process_audio(runtime::AudioFrame::mono_16k(frame),
-                                    "feat_erb", "feat_spec", "m", *backend_, *pool_);
-      const double latency = std::chrono::duration<double, std::milli>(
-          std::chrono::steady_clock::now() - start).count();
-      double input_energy = 0.0, output_energy = 0.0;
-      for (std::size_t index = 0; index < count; ++index) input_energy += data[index] * data[index];
-      for (float value : enhanced.samples()) output_energy += value * value;
-      metrics_.latency_ms.store(latency);
-      metrics_.input_rms.store(std::sqrt(input_energy / std::max<std::size_t>(1, count)));
-      metrics_.output_rms.store(std::sqrt(output_energy / std::max<std::size_t>(1, enhanced.sample_count())));
-      metrics_.frames.fetch_add(1); pool_->reset();
-      if (recording_) {
-        std::lock_guard<std::mutex> record_lock(recording_mutex_);
-        raw_recording_.insert(raw_recording_.end(), data, data + count);
-        bypass_recording_.insert(bypass_recording_.end(), data, data + count);
-        enhanced_recording_.insert(enhanced_recording_.end(), enhanced.samples().begin(), enhanced.samples().end());
-      }
-      std::lock_guard<std::mutex> lock(metrics_.waveform_mutex);
-      metrics_.waveform.assign(data, data + count);
-      metrics_.output_waveform = enhanced.samples();
-    } catch (const std::exception& error) { metrics_.error = error.what(); }
+    pending_audio_.insert(pending_audio_.end(), converted.floatChannelData[0],
+                          converted.floatChannelData[0] + converted.frameLength);
+    while (pending_audio_.size() >= 160) {
+      std::vector<float> frame(pending_audio_.begin(), pending_audio_.begin() + 160);
+      pending_audio_.erase(pending_audio_.begin(), pending_audio_.begin() + 160);
+      const auto start = std::chrono::steady_clock::now();
+      try {
+        const auto enhanced = session_->process_audio(runtime::AudioFrame::mono_16k(frame),
+                                      "feat_erb", "feat_spec", "m", *backend_, *pool_);
+        const double latency = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - start).count();
+        double input_energy = 0.0, output_energy = 0.0;
+        for (float value : frame) input_energy += value * value;
+        for (float value : enhanced.samples()) output_energy += value * value;
+        metrics_.latency_ms.store(latency);
+        metrics_.input_rms.store(std::sqrt(input_energy / frame.size()));
+        metrics_.output_rms.store(std::sqrt(output_energy / std::max<std::size_t>(1, enhanced.sample_count())));
+        metrics_.frames.fetch_add(1); pool_->reset();
+        if (recording_) {
+          std::lock_guard<std::mutex> record_lock(recording_mutex_);
+          raw_recording_.insert(raw_recording_.end(), frame.begin(), frame.end());
+          bypass_recording_.insert(bypass_recording_.end(), frame.begin(), frame.end());
+          enhanced_recording_.insert(enhanced_recording_.end(), enhanced.samples().begin(), enhanced.samples().end());
+        }
+        std::lock_guard<std::mutex> lock(metrics_.waveform_mutex);
+        metrics_.waveform = frame;
+        metrics_.output_waveform = enhanced.samples();
+      } catch (const std::exception& error) { metrics_.error = error.what(); }
+    }
   }];
   NSError* error = nil;
   if (![engine_ startAndReturnError:&error]) { status_label_.stringValue = error.localizedDescription; engine_ = nil; return; }
