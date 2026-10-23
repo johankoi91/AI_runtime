@@ -312,13 +312,14 @@ struct Metrics {
   AVAudioInputNode* input = engine_.inputNode;
   AVAudioFormat* output_format = [[AVAudioFormat alloc] initStandardFormatWithSampleRate:16000 channels:1];
   converter_ = [[AVAudioConverter alloc] initFromFormat:[input inputFormatForBus:0] toFormat:output_format];
-  [input installTapOnBus:0 bufferSize:480 format:nil block:^(AVAudioPCMBuffer* buffer, AVAudioTime*) {
+  AVAudioFormat* input_format = [input inputFormatForBus:0];
+  [input installTapOnBus:0 bufferSize:480 format:input_format block:^(AVAudioPCMBuffer* buffer, AVAudioTime*) {
     if (buffer.floatChannelData == nullptr || converter_ == nil) return;
     AVAudioPCMBuffer* converted = [[AVAudioPCMBuffer alloc] initWithPCMFormat:output_format frameCapacity:512];
     __block BOOL consumed = NO;
     NSError* conversion_error = nil;
     AVAudioConverterOutputStatus conversion_status = [converter_ convertToBuffer:converted error:&conversion_error withInputFromBlock:^AVAudioBuffer*(AVAudioPacketCount, AVAudioConverterInputStatus* status) {
-      if (consumed) { *status = AVAudioConverterInputStatus_NoDataNow; return nil; }
+      if (consumed) { *status = AVAudioConverterInputStatus_EndOfStream; return nil; }
       consumed = YES; *status = AVAudioConverterInputStatus_HaveData; return buffer;
     }];
     if (conversion_status == AVAudioConverterOutputStatus_Error || conversion_error != nil) return;
