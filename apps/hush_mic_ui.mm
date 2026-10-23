@@ -25,6 +25,7 @@ struct Metrics {
   std::atomic<double> output_rms{0.0};
   std::mutex waveform_mutex;
   std::vector<float> waveform;
+  std::vector<float> output_waveform;
   std::string error;
 };
 
@@ -32,6 +33,7 @@ struct Metrics {
 
 @interface WaveformView : NSView
 @property(nonatomic, assign) Metrics* metrics;
+@property(nonatomic, assign) BOOL output;
 @end
 
 @implementation WaveformView
@@ -41,7 +43,7 @@ struct Metrics {
   std::vector<float> values;
   {
     std::lock_guard<std::mutex> lock(self.metrics->waveform_mutex);
-    values = self.metrics->waveform;
+    values = self.output ? self.metrics->output_waveform : self.metrics->waveform;
   }
   if (values.empty()) return;
   NSBezierPath* path = [NSBezierPath bezierPath];
@@ -53,7 +55,8 @@ struct Metrics {
     if (index == 0) [path moveToPoint:NSMakePoint(x, y)];
     else [path lineToPoint:NSMakePoint(x, y)];
   }
-  [[NSColor colorWithRed:0.25 green:0.82 blue:0.95 alpha:1.0] setStroke];
+  if (self.output) [[NSColor colorWithRed:0.35 green:0.95 blue:0.55 alpha:1.0] setStroke];
+  else [[NSColor colorWithRed:0.25 green:0.82 blue:0.95 alpha:1.0] setStroke];
   [path setLineWidth:1.5];
   [path stroke];
 }
@@ -70,6 +73,7 @@ struct Metrics {
   NSButton* start_button_;
   NSPopUpButton* backend_popup_;
   WaveformView* waveform_view_;
+  WaveformView* output_waveform_view_;
   AVAudioEngine* engine_;
   Metrics metrics_;
   std::unique_ptr<runtime::Backend> backend_;
@@ -135,24 +139,35 @@ struct Metrics {
   status_label_.frame = NSMakeRect(420, 438, 430, 22);
   [content addSubview:status_label_];
 
-  waveform_view_ = [[WaveformView alloc] initWithFrame:NSMakeRect(32, 210, 848, 200)];
+  waveform_view_ = [[WaveformView alloc] initWithFrame:NSMakeRect(32, 300, 848, 105)];
   waveform_view_.metrics = &metrics_;
+  waveform_view_.output = NO;
   waveform_view_.wantsLayer = YES;
   waveform_view_.layer.cornerRadius = 10;
   [content addSubview:waveform_view_];
-  NSTextField* wave_title = [NSTextField labelWithString:@"Live waveform / processed frame stream"];
+  NSTextField* wave_title = [NSTextField labelWithString:@"INPUT  ·  microphone waveform"];
   wave_title.textColor = [NSColor secondaryLabelColor];
-  wave_title.frame = NSMakeRect(48, 380, 400, 22);
+  wave_title.frame = NSMakeRect(48, 385, 400, 22);
   [content addSubview:wave_title];
+  output_waveform_view_ = [[WaveformView alloc] initWithFrame:NSMakeRect(32, 165, 848, 105)];
+  output_waveform_view_.metrics = &metrics_;
+  output_waveform_view_.output = YES;
+  output_waveform_view_.wantsLayer = YES;
+  output_waveform_view_.layer.cornerRadius = 10;
+  [content addSubview:output_waveform_view_];
+  NSTextField* output_title = [NSTextField labelWithString:@"OUTPUT  ·  Hush enhanced waveform"];
+  output_title.textColor = [NSColor colorWithRed:0.35 green:0.95 blue:0.55 alpha:1.0];
+  output_title.frame = NSMakeRect(48, 275, 400, 22);
+  [content addSubview:output_title];
 
   metrics_label_ = [NSTextField labelWithString:@"Frames 0    Latency —    Input RMS —    Output RMS —"];
   metrics_label_.font = [NSFont monospacedSystemFontOfSize:13 weight:NSFontWeightRegular];
   metrics_label_.textColor = [NSColor colorWithRed:0.65 green:0.86 blue:0.72 alpha:1];
-  metrics_label_.frame = NSMakeRect(32, 145, 848, 28);
+  metrics_label_.frame = NSMakeRect(32, 112, 848, 28);
   [content addSubview:metrics_label_];
   NSTextField* hint = [NSTextField labelWithString:@"Input: 16 kHz mono · 160 samples/frame · Metal output path · Permission required"];
   hint.textColor = [NSColor tertiaryLabelColor];
-  hint.frame = NSMakeRect(32, 92, 850, 22);
+  hint.frame = NSMakeRect(32, 72, 850, 22);
   [content addSubview:hint];
   [window_ makeKeyAndOrderFront:nil];
   [NSTimer scheduledTimerWithTimeInterval:0.1 target:self selector:@selector(refreshUI:) userInfo:nil repeats:YES];
@@ -194,13 +209,20 @@ struct Metrics {
     std::copy_n(data, count, frame.data());
     const auto start = std::chrono::steady_clock::now();
     try {
-      (void)session_->process_audio(runtime::AudioFrame::mono_16k(std::move(frame)),
+      const auto enhanced = session_->process_audio(runtime::AudioFrame::mono_16k(frame),
                                     "feat_erb", "feat_spec", "m", *backend_, *pool_);
       const double latency = std::chrono::duration<double, std::milli>(
           std::chrono::steady_clock::now() - start).count();
-      metrics_.latency_ms.store(latency); metrics_.frames.fetch_add(1); pool_->reset();
+      double input_energy = 0.0, output_energy = 0.0;
+      for (std::size_t index = 0; index < count; ++index) input_energy += data[index] * data[index];
+      for (float value : enhanced.samples()) output_energy += value * value;
+      metrics_.latency_ms.store(latency);
+      metrics_.input_rms.store(std::sqrt(input_energy / std::max<std::size_t>(1, count)));
+      metrics_.output_rms.store(std::sqrt(output_energy / std::max<std::size_t>(1, enhanced.sample_count())));
+      metrics_.frames.fetch_add(1); pool_->reset();
       std::lock_guard<std::mutex> lock(metrics_.waveform_mutex);
       metrics_.waveform.assign(data, data + count);
+      metrics_.output_waveform = enhanced.samples();
     } catch (const std::exception& error) { metrics_.error = error.what(); }
   }];
   NSError* error = nil;
@@ -211,9 +233,10 @@ struct Metrics {
 - (void)refreshUI:(NSTimer*)timer {
   (void)timer;
   const double latency = metrics_.latency_ms.load();
-  metrics_label_.stringValue = [NSString stringWithFormat:@"Frames %-6llu Latency %6.2f ms    Input RMS live    Output RMS live",
-                                metrics_.frames.load(), latency];
+  metrics_label_.stringValue = [NSString stringWithFormat:@"FRAMES %-6llu   LATENCY %6.2f ms   INPUT RMS %.5f   OUTPUT RMS %.5f",
+                                metrics_.frames.load(), latency, metrics_.input_rms.load(), metrics_.output_rms.load()];
   [waveform_view_ setNeedsDisplay:YES];
+  [output_waveform_view_ setNeedsDisplay:YES];
   if (!metrics_.error.empty()) status_label_.stringValue = [NSString stringWithUTF8String:metrics_.error.c_str()];
 }
 @end
