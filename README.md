@@ -257,6 +257,7 @@ docs/                   学习路线和任务文档
 ## 学习文档
 
 - [从 0 到 1 源码课程：8 课与完整源码地图](./docs/runtime-from-zero/README.md)
+- [Runtime 落地问题复盘：现象、根因、修复和边界](./docs/runtime-implementation-retrospective.md)
 - [Runtime 学习路线图](./docs/runtime-learning-roadmap.md)
 - [第 1 周任务清单](./docs/week-1-task-checklist.md)
 - [源码阅读 Guide](./docs/source-reading-guide.md)
