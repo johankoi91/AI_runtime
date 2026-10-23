@@ -82,7 +82,12 @@ struct Metrics {
   (void)notification;
   [self buildWindow];
   const char* env_path = std::getenv("HUSH_MODEL_BUNDLE");
-  if (env_path != nullptr) [self loadModel:[NSString stringWithUTF8String:env_path]];
+  if (env_path != nullptr) {
+    [self loadModel:[NSString stringWithUTF8String:env_path]];
+  } else {
+    NSString* bundled_model = [[NSBundle mainBundle] pathForResource:@"hush-real-model" ofType:@"tar.gz"];
+    if (bundled_model != nil) [self loadModel:bundled_model];
+  }
 }
 
 - (void)buildWindow {

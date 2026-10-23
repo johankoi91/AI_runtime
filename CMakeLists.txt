@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.20)
 
 project(mini_llm_runtime LANGUAGES CXX)
 
+set(HUSH_MODEL_BUNDLE_PATH "/tmp/hush-real-model.tar.gz" CACHE FILEPATH
+    "Hush model bundle to embed in the macOS app")
+
 find_package(ZLIB REQUIRED)
 
 if(APPLE)
@@ -114,6 +117,16 @@ if(APPLE)
     RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin
     MACOSX_BUNDLE TRUE
     MACOSX_BUNDLE_INFO_PLIST ${PROJECT_SOURCE_DIR}/apps/HushMicUI-Info.plist)
+  if(EXISTS "${HUSH_MODEL_BUNDLE_PATH}")
+    add_custom_command(TARGET hush_mic_ui POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_BUNDLE_DIR:hush_mic_ui>/Contents/Resources"
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${HUSH_MODEL_BUNDLE_PATH}"
+        "$<TARGET_BUNDLE_DIR:hush_mic_ui>/Contents/Resources/hush-real-model.tar.gz")
+  else()
+    message(WARNING "HUSH_MODEL_BUNDLE_PATH does not exist; app will require HUSH_MODEL_BUNDLE at runtime")
+  endif()
 endif()
 
 include(CTest)
