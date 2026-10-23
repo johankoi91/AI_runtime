@@ -101,6 +101,15 @@ HushFrontend::HushFrontend(const HushConfig& config)
       norm_alpha_(std::exp(-static_cast<float>(config.hop_size) /
                            static_cast<float>(config.sample_rate) / config.norm_tau)) {
   config_.validate();
+  float precision = 1000.0f;
+  for (std::size_t digits = 0; digits < 6; ++digits) {
+    const float rounded = std::round(norm_alpha_ * precision) / precision;
+    if (rounded < 1.0f) {
+      norm_alpha_ = rounded;
+      break;
+    }
+    precision *= 10.0f;
+  }
   reset_normalization_state(erb_mean_state_, df_unit_state_);
 }
 
@@ -136,10 +145,17 @@ HushFeatures HushFrontend::process(const AudioFrame& frame) {
   std::copy(history_.begin(), history_.end(), window.begin());
   std::copy(frame.samples().begin(), frame.samples().end(), window.begin() + history_.size());
   Tensor spectrum = make_hush_spectrum(window, config_.fft_size, config_.hop_size);
-  Tensor erb = cpu::erb_filterbank(spectrum, filterbank_);
-  constexpr float kLog10 = 2.302585092994046f;
-  for (std::size_t index = 0; index < erb.numel(); ++index) {
-    erb.data<float>()[index] = 10.0f * erb.data<float>()[index] / kLog10;
+  Tensor erb = Tensor::empty({1, config_.erb_bands});
+  std::size_t offset = 0;
+  for (std::size_t band = 0; band < erb_widths_.size(); ++band) {
+    float energy = 0.0f;
+    for (std::size_t bin = 0; bin < erb_widths_[band]; ++bin) {
+      const float real = spectrum.data<float>()[(offset + bin) * 2];
+      const float imag = spectrum.data<float>()[(offset + bin) * 2 + 1];
+      energy += real * real + imag * imag;
+    }
+    erb.data<float>()[band] = 10.0f * std::log10(energy / erb_widths_[band] + 1e-10f);
+    offset += erb_widths_[band];
   }
   const std::size_t df_bins = std::min(config_.df_bins, spectrum.shape()[1]);
   Tensor df = Tensor::empty({2, 1, df_bins});

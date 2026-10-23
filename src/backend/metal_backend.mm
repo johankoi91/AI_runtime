@@ -1050,8 +1050,10 @@ Tensor MetalBackend::conv_transpose2d(
     std::size_t padding_h,
     std::size_t padding_w,
     std::size_t groups,
-    MemoryPool& pool) const {
-  if (stride_h == 0 || stride_w == 0 || input.dtype() != DType::Float32 || weights.dtype() != DType::Float32 ||
+    MemoryPool& pool,
+    std::size_t output_padding_h,
+    std::size_t output_padding_w) const {
+  if (stride_h == 0 || stride_w == 0 || groups == 0 || input.dtype() != DType::Float32 || weights.dtype() != DType::Float32 ||
       bias.dtype() != DType::Float32 || !input.is_contiguous() || !weights.is_contiguous() ||
       !bias.is_contiguous() || input.rank() != 4 || weights.rank() != 4 || bias.rank() != 1) {
     throw std::invalid_argument("metal::conv_transpose2d requires contiguous float32 NCHW tensors");
@@ -1064,13 +1066,14 @@ Tensor MetalBackend::conv_transpose2d(
   const std::size_t output_channels = weights.shape()[1] * groups;
   const std::size_t kernel_height = weights.shape()[2];
   const std::size_t kernel_width = weights.shape()[3];
-  if (weight_input_channels != input_channels || input_channels % groups != 0 || bias.shape()[0] != output_channels ||
+  if (output_padding_h >= stride_h || output_padding_w >= stride_w ||
+      weight_input_channels != input_channels || input_channels % groups != 0 || bias.shape()[0] != output_channels ||
       (input_height - 1) * stride_h + kernel_height < 2 * padding_h ||
       (input_width - 1) * stride_w + kernel_width < 2 * padding_w) {
     throw std::invalid_argument("metal::conv_transpose2d weight shapes do not match input");
   }
-  const std::size_t output_height = (input_height - 1) * stride_h + kernel_height - 2 * padding_h;
-  const std::size_t output_width = (input_width - 1) * stride_w + kernel_width - 2 * padding_w;
+  const std::size_t output_height = (input_height - 1) * stride_h + kernel_height - 2 * padding_h + output_padding_h;
+  const std::size_t output_width = (input_width - 1) * stride_w + kernel_width - 2 * padding_w + output_padding_w;
   Tensor output = pool.allocate_tensor(
       {batch, output_channels, output_height, output_width}, DType::Float32);
   id<MTLBuffer> input_buffer = make_input_buffer(impl_->device, input, impl_->input_buffers, 10);

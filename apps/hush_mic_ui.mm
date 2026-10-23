@@ -456,6 +456,9 @@ struct Metrics {
 
 - (void)startMicrophoneEngine {
   if (engine_ != nil || !session_) return;
+  session_->reset();
+  pool_->reset();
+  pending_audio_.clear();
   engine_ = [[AVAudioEngine alloc] init];
   AVAudioInputNode* input = engine_.inputNode;
   AVAudioFormat* output_format = [[AVAudioFormat alloc] initStandardFormatWithSampleRate:16000 channels:1];

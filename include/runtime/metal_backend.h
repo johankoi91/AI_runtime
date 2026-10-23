@@ -58,7 +58,9 @@ class MetalBackend final : public Backend {
       std::size_t padding_h,
       std::size_t padding_w,
       std::size_t groups,
-      MemoryPool& pool) const override;
+      MemoryPool& pool,
+      std::size_t output_padding_h = 0,
+      std::size_t output_padding_w = 0) const override;
   Tensor stft(
       const Tensor& samples,
       std::size_t fft_size,

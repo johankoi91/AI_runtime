@@ -9,6 +9,11 @@
 
 namespace runtime {
 
+struct OnnxStreamState {
+  std::unordered_map<std::string, Tensor> recurrent;
+  std::unordered_map<std::string, Tensor> padding;
+};
+
 class OnnxExecutor {
  public:
   explicit OnnxExecutor(const Backend& backend) : backend_(backend) {}
@@ -17,12 +22,14 @@ class OnnxExecutor {
   std::unordered_map<std::string, Tensor> run(
       const OnnxGraph& graph,
       const std::unordered_map<std::string, Tensor>& inputs,
-      MemoryPool& pool) const;
+      MemoryPool& pool,
+      OnnxStreamState* stream_state = nullptr) const;
   std::unordered_map<std::string, Tensor> run(
       const OnnxGraph& graph,
       const OnnxExecutionPlan& plan,
       const std::unordered_map<std::string, Tensor>& inputs,
-      MemoryPool& pool) const;
+      MemoryPool& pool,
+      OnnxStreamState* stream_state = nullptr) const;
 
  private:
   const Backend& backend_;

@@ -13,7 +13,9 @@ Tensor conv_transpose2d(
     std::size_t padding_h,
     std::size_t padding_w,
     std::size_t groups,
-    MemoryPool* pool) {
+    MemoryPool* pool,
+    std::size_t output_padding_h,
+    std::size_t output_padding_w) {
   if (stride_h == 0 || stride_w == 0 || groups == 0 || input.dtype() != DType::Float32 || weights.dtype() != DType::Float32 ||
       bias.dtype() != DType::Float32 || !input.is_contiguous() || !weights.is_contiguous() ||
       !bias.is_contiguous() || input.rank() != 4 || weights.rank() != 4 || bias.rank() != 1) {
@@ -27,7 +29,8 @@ Tensor conv_transpose2d(
   const std::size_t output_channels = weights.shape()[1] * groups;
   const std::size_t kernel_height = weights.shape()[2];
   const std::size_t kernel_width = weights.shape()[3];
-  if (weight_input_channels != input_channels || input_channels % groups != 0 || bias.shape()[0] != output_channels ||
+  if (output_padding_h >= stride_h || output_padding_w >= stride_w ||
+      weight_input_channels != input_channels || input_channels % groups != 0 || bias.shape()[0] != output_channels ||
       (input_height - 1) * stride_h + kernel_height < 2 * padding_h ||
       (input_width - 1) * stride_w + kernel_width < 2 * padding_w) {
     throw std::invalid_argument("conv_transpose2d weight shapes do not match input ic=" +
@@ -37,8 +40,8 @@ Tensor conv_transpose2d(
         "x" + std::to_string(input_width) + " kernel=" + std::to_string(kernel_height) +
         "x" + std::to_string(kernel_width));
   }
-  const std::size_t output_height = (input_height - 1) * stride_h + kernel_height - 2 * padding_h;
-  const std::size_t output_width = (input_width - 1) * stride_w + kernel_width - 2 * padding_w;
+  const std::size_t output_height = (input_height - 1) * stride_h + kernel_height - 2 * padding_h + output_padding_h;
+  const std::size_t output_width = (input_width - 1) * stride_w + kernel_width - 2 * padding_w + output_padding_w;
   Tensor output = pool == nullptr
       ? Tensor::zeros({batch, output_channels, output_height, output_width})
       : pool->allocate_tensor({batch, output_channels, output_height, output_width});
@@ -55,6 +58,7 @@ Tensor conv_transpose2d(
               input_width + input_x;
           const float input_value = input.data<float>()[input_offset];
           for (std::size_t output_channel = 0; output_channel < output_channels; ++output_channel) {
+            if (output_channel / (output_channels / groups) != input_channel / (input_channels / groups)) continue;
             for (std::size_t kernel_y = 0; kernel_y < kernel_height; ++kernel_y) {
               for (std::size_t kernel_x = 0; kernel_x < kernel_width; ++kernel_x) {
                 const std::size_t raw_y = input_y * stride_h + kernel_y;

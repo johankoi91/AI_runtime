@@ -109,8 +109,7 @@ Tensor broadcast_add(const Tensor& lhs, const Tensor& rhs, MemoryPool& pool) {
     const std::size_t rhs_index = index + rhs.rank() >= rank ? index + rhs.rank() - rank : std::numeric_limits<std::size_t>::max();
     const std::size_t lhs_value = lhs_index == std::numeric_limits<std::size_t>::max() ? 1 : lhs.shape()[lhs_index];
     const std::size_t rhs_value = rhs_index == std::numeric_limits<std::size_t>::max() ? 1 : rhs.shape()[rhs_index];
-    if (lhs_value != rhs_value && lhs_value != 1 && rhs_value != 1 &&
-        (lhs_value > rhs_value ? lhs_value - rhs_value : rhs_value - lhs_value) > 1) {
+    if (lhs_value != rhs_value && lhs_value != 1 && rhs_value != 1) {
       throw std::runtime_error("Add broadcast shape mismatch");
     }
     output_shape[index] = std::max(lhs_value, rhs_value);
@@ -198,7 +197,7 @@ Tensor pad_tensor(const Tensor& input, const std::vector<std::int64_t>& pads, fl
       index[dimension] = remaining % input.shape()[dimension];
       remaining /= input.shape()[dimension];
       const std::size_t coordinate = index[dimension] + static_cast<std::size_t>(pads[leading + dimension]);
-      destination = coordinate + destination * output_shape[dimension];
+      destination += coordinate * output.strides()[dimension];
     }
     output.data<float>()[destination] = input.data<float>()[linear];
   }
@@ -268,17 +267,20 @@ Tensor slice_tensor(
   return output;
 }
 
-Tensor run_gru_step(const Backend& backend, const OnnxNode& node,
-                   const std::unordered_map<std::string, Tensor>& tensors, MemoryPool& pool) {
-  if (node.inputs.size() < 5) throw std::runtime_error("stage 15 GRU requires X,W,R,B,initial_h");
+Tensor run_gru_step(const OnnxNode& node,
+                   const std::unordered_map<std::string, Tensor>& tensors, MemoryPool& pool,
+                   const Tensor* retained_hidden) {
+  if (node.inputs.size() < 3) throw std::runtime_error("GRU requires X,W,R");
   const Tensor& sequence = lookup(tensors, node.inputs[0]);
   const Tensor& input_weights = lookup(tensors, node.inputs[1]);
   const Tensor& hidden_weights = lookup(tensors, node.inputs[2]);
   const std::size_t hidden_size_hint = lookup(tensors, node.inputs[2]).shape()[1] / 3;
   Tensor default_bias = Tensor::zeros({1, 6 * hidden_size_hint});
   Tensor default_hidden = Tensor::zeros({1, 1, hidden_size_hint});
-  const Tensor& biases = node.inputs[3].empty() ? default_bias : lookup(tensors, node.inputs[3]);
-  const Tensor& initial_hidden = node.inputs[4].empty() ? default_hidden : lookup(tensors, node.inputs[4]);
+  const Tensor& biases = node.inputs.size() > 3 && !node.inputs[3].empty()
+      ? lookup(tensors, node.inputs[3]) : default_bias;
+  const Tensor& initial_hidden = retained_hidden != nullptr ? *retained_hidden
+      : node.inputs.size() > 5 && !node.inputs[5].empty() ? lookup(tensors, node.inputs[5]) : default_hidden;
   if (sequence.rank() != 3 || sequence.shape()[1] != 1 ||
       input_weights.rank() != 3 || hidden_weights.rank() != 3 || biases.rank() != 2 ||
       initial_hidden.rank() != 3 || input_weights.shape()[0] != 1 || hidden_weights.shape()[0] != 1 ||
@@ -307,6 +309,19 @@ Tensor run_gru_step(const Backend& backend, const OnnxNode& node,
     if (attribute.name == "linear_before_reset") linear_before_reset = attribute.integer != 0;
   }
   for (std::size_t time = 0; time < time_steps; ++time) {
+    std::vector<float> reset_state(hidden_size, 0.0f);
+    if (!linear_before_reset) {
+      for (std::size_t unit = 0; unit < hidden_size; ++unit) {
+        float gate = bias_data[hidden_size + unit] + bias_data[4 * hidden_size + unit];
+        for (std::size_t index = 0; index < input_size; ++index) {
+          gate += input_data_weights[(hidden_size + unit) * input_size + index] * input_data[time * input_size + index];
+        }
+        for (std::size_t index = 0; index < hidden_size; ++index) {
+          gate += hidden_data_weights[(hidden_size + unit) * hidden_size + index] * hidden[index];
+        }
+        reset_state[unit] = hidden[unit] / (1.0f + std::exp(-gate));
+      }
+    }
     std::vector<float> next(hidden_size, 0.0f);
     for (std::size_t unit = 0; unit < hidden_size; ++unit) {
       float update = bias_data[unit] + bias_data[3 * hidden_size + unit];
@@ -329,10 +344,13 @@ Tensor run_gru_step(const Backend& backend, const OnnxNode& node,
       if (linear_before_reset) {
         candidate += reset * (recurrent_candidate + bias_data[5 * hidden_size + unit]);
       } else {
-        candidate += reset * recurrent_candidate + bias_data[5 * hidden_size + unit];
+        candidate += bias_data[5 * hidden_size + unit];
+        for (std::size_t index = 0; index < hidden_size; ++index) {
+          candidate += hidden_data_weights[(2 * hidden_size + unit) * hidden_size + index] * reset_state[index];
+        }
       }
       candidate = std::tanh(candidate);
-      next[unit] = (1.0f - update) * hidden[unit] + update * candidate;
+      next[unit] = update * hidden[unit] + (1.0f - update) * candidate;
       output.data<float>()[time * hidden_size + unit] = next[unit];
     }
     hidden = std::move(next);
@@ -343,10 +361,11 @@ Tensor run_gru_step(const Backend& backend, const OnnxNode& node,
 }  // namespace
 
 std::unordered_map<std::string, Tensor> OnnxExecutor::run(
-    const OnnxGraph& graph, const std::unordered_map<std::string, Tensor>& inputs, MemoryPool& pool) const {
+    const OnnxGraph& graph, const std::unordered_map<std::string, Tensor>& inputs,
+    MemoryPool& pool, OnnxStreamState* stream_state) const {
   const auto found = plans_.find(&graph);
-  if (found != plans_.end()) return run(graph, found->second, inputs, pool);
-  return run(graph, OnnxExecutionPlan::compile(graph), inputs, pool);
+  if (found != plans_.end()) return run(graph, found->second, inputs, pool, stream_state);
+  return run(graph, OnnxExecutionPlan::compile(graph), inputs, pool, stream_state);
 }
 
 void OnnxExecutor::prepare(const OnnxGraph& graph) {
@@ -363,7 +382,8 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
     const OnnxGraph& graph,
     const OnnxExecutionPlan& plan,
     const std::unordered_map<std::string, Tensor>& inputs,
-    MemoryPool& pool) const {
+    MemoryPool& pool,
+    OnnxStreamState* stream_state) const {
   std::unordered_map<std::string, Tensor> tensors = inputs;
   const auto prepared = initializers_.find(&graph);
   if (prepared != initializers_.end()) {
@@ -441,6 +461,7 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
           : Tensor::zeros({weights.shape()[1]});
       const auto strides = attribute_values(graph, node, "strides", {1, 1});
       const auto pads = attribute_values(graph, node, "pads", {0, 0, 0, 0});
+      const auto output_padding = attribute_values(graph, node, "output_padding", {0, 0});
       const auto dilations = attribute_values(graph, node, "dilations", {1, 1});
       const auto groups = attribute_values(graph, node, "group", {1});
       const std::size_t deconv_output_channels = weights.shape()[1] * static_cast<std::size_t>(groups[0]);
@@ -448,7 +469,8 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
         const float value = bias.data<float>()[0];
         bias = Tensor::from_vector({deconv_output_channels}, std::vector<float>(deconv_output_channels, value));
       }
-      if (strides.size() != 2 || pads.size() != 4 || dilations.size() != 2 || groups.size() != 1 ||
+      if (output_padding.size() != 2 || output_padding[0] < 0 || output_padding[1] < 0 ||
+          strides.size() != 2 || pads.size() != 4 || dilations.size() != 2 || groups.size() != 1 ||
           strides[0] <= 0 || strides[1] <= 0 || pads[0] < 0 || pads[1] < 0 ||
           pads[2] < 0 || pads[3] < 0 || dilations[0] != 1 || dilations[1] != 1 ||
           pads[0] != pads[2] || pads[1] != pads[3]) {
@@ -461,13 +483,26 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
       output = backend_.conv_transpose2d(
           input, weights, bias, static_cast<std::size_t>(strides[0]),
           static_cast<std::size_t>(strides[1]), static_cast<std::size_t>(pads[0]),
-          static_cast<std::size_t>(pads[1]), static_cast<std::size_t>(groups[0]), pool);
+          static_cast<std::size_t>(pads[1]), static_cast<std::size_t>(groups[0]), pool,
+          static_cast<std::size_t>(output_padding[0]), static_cast<std::size_t>(output_padding[1]));
       if (node.outputs.size() == 1) {
         const std::string& output_name = node.outputs[0];
         (void)output_name;
       }
     } else if (node.op_type == "GRU") {
-      output = run_gru_step(backend_, node, tensors, pool);
+      const Tensor* retained_hidden = nullptr;
+      if (stream_state != nullptr) {
+        const auto hidden = stream_state->recurrent.find(node.name);
+        if (hidden != stream_state->recurrent.end()) retained_hidden = &hidden->second;
+      }
+      output = run_gru_step(node, tensors, pool, retained_hidden);
+      if (stream_state != nullptr) {
+        const std::size_t hidden_size = output.shape()[3];
+        Tensor retained = Tensor::empty({1, 1, hidden_size});
+        std::copy_n(output.data<float>() + (output.shape()[0] - 1) * hidden_size,
+                    hidden_size, retained.data<float>());
+        stream_state->recurrent[node.name] = std::move(retained);
+      }
     } else if (node.op_type == "Reshape") {
       if (node.inputs.size() != 2) throw std::runtime_error("Reshape requires data and shape inputs");
       const Tensor& shape_tensor = lookup(tensors, node.inputs[1]);
@@ -657,7 +692,28 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
       const auto pads = tensor_ints(lookup(tensors, node.inputs[1]));
       float value = 0.0f;
       if (node.inputs.size() == 3) value = lookup(tensors, node.inputs[2]).data<float>()[0];
-      output = pad_tensor(lookup(tensors, node.inputs[0]), pads, value, pool);
+      const Tensor& input = lookup(tensors, node.inputs[0]);
+      output = pad_tensor(input, pads, value, pool);
+      if (stream_state != nullptr && input.rank() == 4 && pads.size() == 8 && pads[2] > 0 &&
+          pads[0] == 0 && pads[1] == 0 && pads[3] == 0 && pads[4] == 0 &&
+          pads[5] == 0 && pads[6] == 0 && pads[7] == 0) {
+        const std::size_t history_frames = static_cast<std::size_t>(pads[2]);
+        const std::size_t width = input.shape()[3];
+        const std::size_t channels = input.shape()[0] * input.shape()[1];
+        const auto previous = stream_state->padding.find(node.name);
+        Tensor retained = Tensor::empty({input.shape()[0], input.shape()[1], history_frames, width});
+        for (std::size_t channel = 0; channel < channels; ++channel) {
+          float* destination = output.data<float>() + channel * output.shape()[2] * width;
+          if (previous != stream_state->padding.end()) {
+            if (previous->second.shape() != retained.shape()) throw std::runtime_error("streaming Pad shape changed");
+            std::copy_n(previous->second.data<float>() + channel * history_frames * width,
+                        history_frames * width, destination);
+          }
+          std::copy_n(destination + (output.shape()[2] - history_frames) * width,
+                      history_frames * width, retained.data<float>() + channel * history_frames * width);
+        }
+        stream_state->padding[node.name] = std::move(retained);
+      }
     } else if (node.op_type == "Slice") {
       if (node.inputs.size() < 3 || node.inputs.size() > 5) throw std::runtime_error("Slice input count unsupported");
       const auto starts = tensor_ints(lookup(tensors, node.inputs[1]));

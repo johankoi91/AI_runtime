@@ -31,7 +31,8 @@ class HushStreamSession {
 
   std::unordered_map<std::string, Tensor> process_encoder(
       const std::unordered_map<std::string, Tensor>& inputs,
-      MemoryPool& pool);
+      MemoryPool& pool,
+      OnnxStreamState* stream_state = nullptr);
   std::unordered_map<std::string, Tensor> process_frame(
       const AudioFrame& frame,
       const std::unordered_map<std::string, Tensor>& feature_inputs,
@@ -44,7 +45,9 @@ class HushStreamSession {
       const std::unordered_map<std::string, Tensor>& encoder_outputs,
       const std::unordered_map<std::string, Tensor>& erb_inputs,
       const std::unordered_map<std::string, Tensor>& df_inputs,
-      MemoryPool& pool) const;
+      MemoryPool& pool,
+      OnnxStreamState* erb_state = nullptr,
+      OnnxStreamState* df_state = nullptr) const;
   std::unordered_map<std::string, Tensor> process_audio_frame(
       const AudioFrame& frame,
       const std::string& erb_input_name,
@@ -78,8 +81,9 @@ class HushStreamSession {
   HushFrontend frontend_;
   std::vector<float> df_history_;
   std::vector<float> synthesis_history_;
-  std::vector<float> erb_feature_history_;
-  std::vector<float> df_feature_history_;
+  OnnxStreamState encoder_stream_state_;
+  OnnxStreamState erb_stream_state_;
+  OnnxStreamState df_stream_state_;
   std::size_t frame_index_ = 0;
 };
 

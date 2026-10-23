@@ -553,6 +553,86 @@ void test_onnx_execution_plan(TestContext& ctx) {
   ctx.expect_true(!plan.is_graph_output("a"), "execution plan should distinguish graph outputs");
 }
 
+void test_onnx_gru_reference(TestContext& ctx) {
+  runtime::CPUBackend backend;
+  runtime::OnnxExecutor executor(backend);
+  runtime::OnnxGraph graph;
+  graph.initializers = {
+      {.name = "w", .shape = {1, 6, 2}, .values = {.2f, -.3f, .4f, .1f, -.2f, .3f, .1f, .5f, .6f, -.1f, -.4f, .2f}},
+      {.name = "r", .shape = {1, 6, 2}, .values = {.1f, .2f, -.3f, .4f, .2f, -.5f, .6f, .1f, -.4f, .7f, .3f, -.2f}},
+      {.name = "b", .shape = {1, 12}, .values = {-.3f, -.24545455f, -.19090909f, -.13636364f, -.08181818f,
+          -.02727273f, .02727273f, .08181818f, .13636364f, .19090909f, .24545455f, .3f}},
+      {.name = "h", .shape = {1, 1, 2}, .values = {.2f, -.4f}},
+  };
+  graph.nodes = {{.name = "gru", .op_type = "GRU", .inputs = {"x", "w", "r", "b", "", "h"},
+      .outputs = {"y", "yh"}, .attributes = {{.name = "linear_before_reset", .integer = 1}}}};
+  const std::vector<float> samples = {.3f, -.2f, .7f, .1f, -.5f, .9f};
+  const std::vector<std::vector<float>> expected = {
+      {.18670663f, -.06748220f, .33993664f, -.01144423f, -.07672316f, .35991129f},
+      {.12201120f, -.14911947f, .24976730f, -.11637834f, -.18099554f, .27793449f},
+  };
+  for (std::size_t mode = 0; mode < expected.size(); ++mode) {
+    graph.nodes[0].attributes[0].integer = static_cast<std::int64_t>(mode);
+    runtime::MemoryPool pool;
+    const auto complete = executor.run(graph, {{"x", runtime::Tensor::from_vector({3, 1, 2}, samples)}}, pool);
+    for (std::size_t index = 0; index < samples.size(); ++index) {
+      ctx.expect_close(complete.at("y").data<float>()[index], expected[mode][index], 1e-6f,
+                       "GRU should match ONNX Runtime reference with nonzero initial state");
+    }
+    pool.reset();
+    runtime::OnnxStreamState state;
+    executor.run(graph, {{"x", runtime::Tensor::from_vector({2, 1, 2}, {.3f, -.2f, .7f, .1f})}}, pool, &state);
+    pool.reset();
+    const auto tail = executor.run(graph, {{"x", runtime::Tensor::from_vector({1, 1, 2}, {-.5f, .9f})}}, pool, &state);
+    ctx.expect_close(tail.at("yh").data<float>()[0], expected[mode][4], 1e-6f,
+                     "streaming GRU should preserve state across pool reset");
+    ctx.expect_close(tail.at("yh").data<float>()[1], expected[mode][5], 1e-6f,
+                     "streaming GRU should match full-sequence execution");
+  }
+}
+
+void test_onnx_stream_padding(TestContext& ctx) {
+  runtime::OnnxGraph graph;
+  graph.initializers = {{.name = "pads", .shape = {8}, .values = {0, 0, 2, 0, 0, 0, 0, 0}}};
+  graph.nodes = {{.name = "causal_pad", .op_type = "Pad", .inputs = {"x", "pads"}, .outputs = {"y"}}};
+  runtime::CPUBackend backend;
+  runtime::OnnxExecutor executor(backend);
+  runtime::MemoryPool pool;
+  runtime::OnnxStreamState state;
+  const auto first = executor.run(graph,
+      {{"x", runtime::Tensor::from_vector({1, 2, 2, 3}, {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12})}}, pool, &state);
+  const std::vector<float> expected_first = {0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6,
+                                          0, 0, 0, 0, 0, 0, 7, 8, 9, 10, 11, 12};
+  for (std::size_t index = 0; index < expected_first.size(); ++index) {
+    ctx.expect_close(first.at("y").data<float>()[index], expected_first[index], 0.0f,
+                     "Pad should preserve channel, time, and frequency coordinates");
+  }
+  pool.reset();
+  const auto second = executor.run(graph,
+      {{"x", runtime::Tensor::from_vector({1, 2, 1, 3}, {13, 14, 15, 16, 17, 18})}}, pool, &state);
+  const std::vector<float> expected_second = {1, 2, 3, 4, 5, 6, 13, 14, 15, 7, 8, 9, 10, 11, 12, 16, 17, 18};
+  for (std::size_t index = 0; index < expected_second.size(); ++index) {
+    ctx.expect_close(second.at("y").data<float>()[index], expected_second[index], 0.0f,
+                     "causal Pad should reuse real history for a short final chunk");
+  }
+}
+
+void test_grouped_transpose_padding(TestContext& ctx) {
+  runtime::CPUBackend backend;
+  runtime::MemoryPool pool;
+  const auto output = backend.conv_transpose2d(
+      runtime::Tensor::from_vector({1, 2, 1, 2}, {1, 2, 10, 20}),
+      runtime::Tensor::from_vector({2, 1, 1, 3}, {1, 2, 3, 4, 5, 6}),
+      runtime::Tensor::zeros({2}), 1, 2, 0, 1, 2, pool, 0, 1);
+  ctx.expect_true(output.shape() == runtime::Shape({1, 2, 1, 4}),
+                  "ConvTranspose output_padding should restore the final frequency bin");
+  const std::vector<float> expected = {2, 5, 4, 6, 50, 140, 100, 120};
+  for (std::size_t index = 0; index < expected.size(); ++index) {
+    ctx.expect_close(output.data<float>()[index], expected[index], 1e-6f,
+                     "grouped ConvTranspose should isolate channels and compute the output boundary");
+  }
+}
+
 void test_onnx_connection_ops(TestContext& ctx) {
   runtime::OnnxGraph graph;
   graph.initializers = {
@@ -887,6 +967,9 @@ int main() {
       {"onnx_conv_transpose", test_onnx_conv_transpose},
       {"onnx_shape_constant", test_onnx_shape_constant},
       {"onnx_execution_plan", test_onnx_execution_plan},
+      {"onnx_gru_reference", test_onnx_gru_reference},
+      {"onnx_stream_padding", test_onnx_stream_padding},
+      {"grouped_transpose_padding", test_grouped_transpose_padding},
       {"onnx_connection_ops", test_onnx_connection_ops},
       {"onnx_slice", test_onnx_slice},
       {"onnx_einsum", test_onnx_einsum},

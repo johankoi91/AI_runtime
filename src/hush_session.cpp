@@ -127,7 +127,8 @@ void HushStreamSession::validate_frame(const AudioFrame& frame) const {
 
 std::unordered_map<std::string, Tensor> HushStreamSession::process_encoder(
     const std::unordered_map<std::string, Tensor>& inputs,
-    MemoryPool& pool) {
+    MemoryPool& pool,
+    OnnxStreamState* stream_state) {
   std::unordered_map<std::string, Tensor> frame_inputs = inputs;
   for (const std::string& input_name : model_.encoder.inputs) {
     bool is_initializer = false;
@@ -152,7 +153,7 @@ std::unordered_map<std::string, Tensor> HushStreamSession::process_encoder(
     }
   }
 
-  auto outputs = executor_.run(model_.encoder, frame_inputs, pool);
+  auto outputs = executor_.run(model_.encoder, frame_inputs, pool, stream_state);
   for (const StateBinding& binding : encoder_state_bindings_) {
     const auto output = outputs.find(binding.output_name);
     if (output == outputs.end()) {
@@ -186,7 +187,9 @@ HushDecoderOutputs HushStreamSession::process_decoders(
     const std::unordered_map<std::string, Tensor>& encoder_outputs,
     const std::unordered_map<std::string, Tensor>& erb_inputs,
     const std::unordered_map<std::string, Tensor>& df_inputs,
-    MemoryPool& pool) const {
+    MemoryPool& pool,
+    OnnxStreamState* erb_state,
+    OnnxStreamState* df_state) const {
   auto bind_encoder_outputs = [&](const std::unordered_map<std::string, Tensor>& explicit_inputs) {
     std::unordered_map<std::string, Tensor> inputs = encoder_outputs;
     for (const auto& item : explicit_inputs) inputs[item.first] = item.second;
@@ -199,8 +202,8 @@ HushDecoderOutputs HushStreamSession::process_decoders(
     return inputs;
   };
   HushDecoderOutputs outputs;
-  outputs.erb = executor_.run(model_.erb_decoder, bind_encoder_outputs(erb_inputs), pool);
-  outputs.df = executor_.run(model_.df_decoder, bind_encoder_outputs(df_inputs), pool);
+  outputs.erb = executor_.run(model_.erb_decoder, bind_encoder_outputs(erb_inputs), pool, erb_state);
+  outputs.df = executor_.run(model_.df_decoder, bind_encoder_outputs(df_inputs), pool, df_state);
   return outputs;
 }
 
@@ -228,29 +231,16 @@ AudioFrame HushStreamSession::process_audio(
     const Backend& backend,
     MemoryPool& pool) {
   validate_frame(frame);
+  for (const OnnxNode& node : model_.encoder.nodes) {
+    if (node.op_type == "Conv") {
+      return process_audio_batch({frame}, erb_input_name, df_input_name, mask_output_name, backend, pool).front();
+    }
+  }
   const HushFeatures features = frontend_.process(frame);
   Tensor erb = features.erb;
   Tensor df = features.df;
-  bool spatial_encoder = false;
-  for (const OnnxNode& node : model_.encoder.nodes) spatial_encoder = spatial_encoder || node.op_type == "Conv";
-  if (spatial_encoder) {
-    constexpr std::size_t kContextFrames = 32;
-    const std::size_t erb_bands = model_.config.erb_bands;
-    const std::size_t df_bins = model_.config.df_bins;
-    if (erb_feature_history_.size() != kContextFrames * erb_bands) {
-      erb_feature_history_.assign(kContextFrames * erb_bands, 0.0f);
-      df_feature_history_.assign(kContextFrames * 2 * df_bins, 0.0f);
-    }
-    std::copy(erb_feature_history_.begin() + erb_bands, erb_feature_history_.end(), erb_feature_history_.begin());
-    std::copy_n(features.erb.data<float>(), erb_bands, erb_feature_history_.data() + (kContextFrames - 1) * erb_bands);
-    std::copy(df_feature_history_.begin() + 2 * df_bins, df_feature_history_.end(), df_feature_history_.begin());
-    std::copy_n(features.df.data<float>(), 2 * df_bins, df_feature_history_.data() + (kContextFrames - 1) * 2 * df_bins);
-    erb = Tensor::from_vector({1, 1, kContextFrames, erb_bands}, erb_feature_history_);
-    df = Tensor::from_vector({1, 2, kContextFrames, df_bins}, df_feature_history_);
-  } else {
-    if (erb.rank() == 2) erb = cpu::reshape(erb, {1, 1, erb.shape()[0], erb.shape()[1]});
-    if (df.rank() == 3) df = cpu::reshape(df, {1, df.shape()[0], df.shape()[1], df.shape()[2]});
-  }
+  if (erb.rank() == 2) erb = cpu::reshape(erb, {1, 1, erb.shape()[0], erb.shape()[1]});
+  if (df.rank() == 3) df = cpu::reshape(df, {1, df.shape()[0], df.shape()[1], df.shape()[2]});
   const auto encoder_outputs = process_encoder(
       {{erb_input_name, erb}, {df_input_name, df}}, pool);
   const auto lsnr_iterator = encoder_outputs.find("lsnr");
@@ -314,7 +304,7 @@ std::vector<AudioFrame> HushStreamSession::process_audio_batch(
     MemoryPool& pool) {
   (void)backend;
   if (frames.empty() || frames.size() > 32) throw std::invalid_argument("Hush batch must contain 1..32 frames");
-  const std::size_t time_steps = 32;
+  const std::size_t time_steps = frames.size();
   const std::size_t erb_bands = model_.config.erb_bands;
   const std::size_t df_bins = model_.config.df_bins;
   std::vector<float> erb_values(time_steps * erb_bands, 0.0f);
@@ -331,15 +321,10 @@ std::vector<AudioFrame> HushStreamSession::process_audio_batch(
       df_values[time * df_bins + time_steps * df_bins + bin] = features.df.data<float>()[df_bins + bin];
     }
   }
-  while (spectra.size() < time_steps) {
-    std::vector<float> zeros(model_.config.hop_size, 0.0f);
-    const HushFeatures features = frontend_.process(AudioFrame::mono_16k(std::move(zeros)));
-    spectra.push_back(features.spectrum);
-  }
   Tensor erb = Tensor::from_vector({1, 1, time_steps, erb_bands}, erb_values);
   Tensor df = Tensor::from_vector({1, 2, time_steps, df_bins}, df_values);
-  const auto encoder_outputs = process_encoder({{erb_input_name, erb}, {df_input_name, df}}, pool);
-  const auto decoder_outputs = process_decoders(encoder_outputs, {}, {}, pool);
+  const auto encoder_outputs = process_encoder({{erb_input_name, erb}, {df_input_name, df}}, pool, &encoder_stream_state_);
+  const auto decoder_outputs = process_decoders(encoder_outputs, {}, {}, pool, &erb_stream_state_, &df_stream_state_);
   auto mask_iterator = decoder_outputs.erb.find(mask_output_name);
   if (mask_iterator == decoder_outputs.erb.end()) throw std::runtime_error("Hush ERB decoder mask output is missing: " + mask_output_name);
   const Tensor& mask_sequence = mask_iterator->second;
@@ -382,8 +367,9 @@ void HushStreamSession::reset() {
   frontend_.reset();
   df_history_.clear();
   synthesis_history_.clear();
-  erb_feature_history_.clear();
-  df_feature_history_.clear();
+  encoder_stream_state_ = {};
+  erb_stream_state_ = {};
+  df_stream_state_ = {};
   frame_index_ = 0;
 }
 

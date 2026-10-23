@@ -46,7 +46,9 @@ Tensor conv_transpose2d(
     std::size_t padding_h,
     std::size_t padding_w,
     std::size_t groups = 1,
-    MemoryPool* pool = nullptr);
+    MemoryPool* pool = nullptr,
+    std::size_t output_padding_h = 0,
+    std::size_t output_padding_w = 0);
 Tensor erb_filterbank(
     const Tensor& spectrum,
     const Tensor& filterbank,
