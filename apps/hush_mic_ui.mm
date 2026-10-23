@@ -70,6 +70,7 @@ struct Metrics {
   NSTextField* model_label_;
   NSTextField* status_label_;
   NSTextField* metrics_label_;
+  NSTextField* demo_label_;
   NSButton* start_button_;
   NSPopUpButton* backend_popup_;
   WaveformView* waveform_view_;
@@ -169,8 +170,65 @@ struct Metrics {
   hint.textColor = [NSColor tertiaryLabelColor];
   hint.frame = NSMakeRect(32, 72, 850, 22);
   [content addSubview:hint];
+  NSButton* generate_demo = [NSButton buttonWithTitle:@"Generate Background Voice Demo" target:self action:@selector(generateInterferenceDemo:)];
+  generate_demo.frame = NSMakeRect(32, 30, 220, 30);
+  [content addSubview:generate_demo];
+  NSButton* play_input = [NSButton buttonWithTitle:@"Play Mixed Input" target:self action:@selector(playMixedInput:)];
+  play_input.frame = NSMakeRect(265, 30, 135, 30);
+  [content addSubview:play_input];
+  NSButton* play_output = [NSButton buttonWithTitle:@"Play Enhanced Output" target:self action:@selector(playEnhancedOutput:)];
+  play_output.frame = NSMakeRect(412, 30, 150, 30);
+  [content addSubview:play_output];
+  demo_label_ = [NSTextField labelWithString:@"Demo: generate a simulated primary voice + background speaker mix"];
+  demo_label_.textColor = [NSColor tertiaryLabelColor];
+  demo_label_.frame = NSMakeRect(580, 34, 300, 22);
+  [content addSubview:demo_label_];
   [window_ makeKeyAndOrderFront:nil];
   [NSTimer scheduledTimerWithTimeInterval:0.1 target:self selector:@selector(refreshUI:) userInfo:nil repeats:YES];
+}
+
+- (void)generateInterferenceDemo:(id)sender {
+  (void)sender;
+  if (!model_) { demo_label_.stringValue = @"Demo: load the model first"; return; }
+  demo_label_.stringValue = @"Demo: processing simulated background speaker…";
+  auto model = model_.get();
+  auto backend = backend_.get();
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    try {
+      const std::size_t total = 16'000 * 3;
+      std::vector<float> mixed(total);
+      for (std::size_t index = 0; index < total; ++index) {
+        const double time = static_cast<double>(index) / 16'000.0;
+        const float primary = 0.18f * static_cast<float>(std::sin(2.0 * M_PI * 180.0 * time + 0.7 * std::sin(2.0 * M_PI * 3.0 * time)));
+        const float background = 0.13f * static_cast<float>(std::sin(2.0 * M_PI * 265.0 * time + 1.1 * std::sin(2.0 * M_PI * 2.0 * time)));
+        mixed[index] = primary + background;
+      }
+      runtime::write_wav_mono16("/tmp/hush-background-input.wav", mixed);
+      runtime::HushStreamSession demo_session(*model, *backend, {});
+      runtime::MemoryPool demo_pool;
+      std::vector<float> enhanced; enhanced.reserve(total);
+      for (std::size_t offset = 0; offset < total; offset += 160) {
+        std::vector<float> frame(mixed.begin() + offset, mixed.begin() + offset + 160);
+        const auto output = demo_session.process_audio(runtime::AudioFrame::mono_16k(std::move(frame)),
+                                                        "feat_erb", "feat_spec", "m", *backend, demo_pool);
+        enhanced.insert(enhanced.end(), output.samples().begin(), output.samples().end());
+        demo_pool.reset();
+      }
+      runtime::write_wav_mono16("/tmp/hush-background-output.wav", enhanced);
+      dispatch_async(dispatch_get_main_queue(), ^{ demo_label_.stringValue = @"Demo ready: mixed input and enhanced output saved in /tmp"; });
+    } catch (const std::exception& error) {
+      const std::string message = error.what();
+      dispatch_async(dispatch_get_main_queue(), ^{ demo_label_.stringValue = [NSString stringWithUTF8String:message.c_str()]; });
+    }
+  });
+}
+
+- (void)playMixedInput:(id)sender { (void)sender; [self playDemoFile:@"/tmp/hush-background-input.wav"]; }
+- (void)playEnhancedOutput:(id)sender { (void)sender; [self playDemoFile:@"/tmp/hush-background-output.wav"]; }
+- (void)playDemoFile:(NSString*)path {
+  if (![[NSFileManager defaultManager] fileExistsAtPath:path]) { demo_label_.stringValue = @"Demo: generate the files first"; return; }
+  AVAudioPlayer* player = [[AVAudioPlayer alloc] initWithContentsOfURL:[NSURL fileURLWithPath:path] error:nil];
+  [player play];
 }
 
 - (void)chooseModel:(id)sender {
