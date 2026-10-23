@@ -260,23 +260,38 @@ struct Metrics {
     try {
       const AVAudioFrameCount native_frames = native_file.length;
       if (native_frames == 0) throw std::runtime_error("native capture contains no frames");
-      AVAudioPCMBuffer* native_buffer = [[AVAudioPCMBuffer alloc]
-          initWithPCMFormat:native_file.processingFormat frameCapacity:native_frames];
+      // AVAudioFile may return a partial buffer for a large read. Read in
+      // bounded chunks and feed every chunk to the converter so long takes
+      // cannot be silently truncated.
+      NSMutableArray<AVAudioPCMBuffer*>* native_chunks = [NSMutableArray array];
+      AVAudioFrameCount frames_read = 0;
       NSError* read_error = nil;
-      if (![native_file readIntoBuffer:native_buffer error:&read_error]) {
-        throw std::runtime_error(error_message(read_error, "could not read native capture"));
+      while (frames_read < native_frames) {
+        AVAudioPCMBuffer* chunk = [[AVAudioPCMBuffer alloc]
+            initWithPCMFormat:native_file.processingFormat frameCapacity:4096];
+        if (![native_file readIntoBuffer:chunk error:&read_error]) {
+          throw std::runtime_error(error_message(read_error, "could not read native capture"));
+        }
+        if (chunk.frameLength == 0) break;
+        [native_chunks addObject:chunk];
+        frames_read += chunk.frameLength;
       }
+      if (frames_read == 0) throw std::runtime_error("native capture read returned no frames");
       AVAudioFormat* target_format = [[AVAudioFormat alloc] initStandardFormatWithSampleRate:16000 channels:1];
       AVAudioConverter* offline_converter = [[AVAudioConverter alloc]
           initFromFormat:native_file.processingFormat toFormat:target_format];
       const AVAudioFrameCount target_capacity = static_cast<AVAudioFrameCount>(
-          std::ceil(native_frames * 16000.0 / native_file.processingFormat.sampleRate) + 320);
+          std::ceil(frames_read * 16000.0 / native_file.processingFormat.sampleRate) + 320);
       AVAudioPCMBuffer* target_buffer = [[AVAudioPCMBuffer alloc]
           initWithPCMFormat:target_format frameCapacity:target_capacity];
-      __block BOOL delivered = NO;
+      __block NSUInteger chunk_index = 0;
       if ([offline_converter convertToBuffer:target_buffer error:&read_error withInputFromBlock:^AVAudioBuffer*(AVAudioPacketCount, AVAudioConverterInputStatus* status) {
-            if (delivered) { *status = AVAudioConverterInputStatus_EndOfStream; return nil; }
-            delivered = YES; *status = AVAudioConverterInputStatus_HaveData; return native_buffer;
+            if (chunk_index >= native_chunks.count) {
+              *status = AVAudioConverterInputStatus_EndOfStream;
+              return nil;
+            }
+            *status = AVAudioConverterInputStatus_HaveData;
+            return native_chunks[chunk_index++];
           }] == AVAudioConverterOutputStatus_Error || read_error != nil) {
         throw std::runtime_error(error_message(read_error, "could not convert native capture"));
       }
