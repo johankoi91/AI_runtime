@@ -17,6 +17,8 @@
 先构建并运行不需要模型的回归测试：
 
 ```sh
+cmake -S . -B build-app -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+  -DHUSH_MODEL_BUNDLE_PATH="$PWD/build-app/models/hush-real-model.tar.gz"
 cmake --build build-app -j4
 ctest --test-dir build-app --output-on-failure
 ```

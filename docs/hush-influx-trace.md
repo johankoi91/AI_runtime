@@ -32,6 +32,8 @@ App 因现有服务器使用 HTTP/IP，包含 macOS ATS HTTP 访问例外；服�
 ## 自测
 
 ```sh
+cmake -S . -B build-app -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+  -DHUSH_MODEL_BUNDLE_PATH="$PWD/build-app/models/hush-real-model.tar.gz"
 cmake --build build-app --parallel
 ctest --test-dir build-app --output-on-failure
 node tests/web_trace_tests.js

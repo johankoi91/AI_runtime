@@ -114,34 +114,21 @@
 
 ## 浏览器可视化
 
-这些页面展示解释性动画和可选 trace 数据，不承担 Hush 数值推理。React 当前实际入口由 `index.html` 的 script 决定，当前为 `src/safe2.jsx`；其他 JSX 只有被入口导入时才生效。示意图中出现的 Node 状态或线程格子，不自动等于 C++ 中有同名字段或实际调度采样。
+浏览器页面展示解释性动画和可选 trace 数据，不承担 Hush 数值推理。线上入口位于 `deploy/web/`：`index.html` 回放真实 Hush 事件，`tutorial.html` 提供数学与 GPU 动画课程；`inference.js`、`trace_data.js` 和 `tutorial*.js` 分别负责回放、数据解析和教程交互。
 
 | 文件 | 职责与阅读提示 |
 | --- | --- |
-| [apps/metal_visualizer.html](../../apps/metal_visualizer.html) | 早期 Metal 执行讲解页面 |
-| [apps/react-gpu-ui/index.html](../../apps/react-gpu-ui/index.html) | React 页面入口，当前加载 safe2.jsx |
-| [apps/react-gpu-ui/package-lock.json](../../apps/react-gpu-ui/package-lock.json) | 前端依赖版本锁定 |
-| [apps/react-gpu-ui/package.json](../../apps/react-gpu-ui/package.json) | React/Vite 可视化的依赖与脚本 |
-| [apps/react-gpu-ui/src/app.jsx](../../apps/react-gpu-ui/src/app.jsx) | React 可视化方案/历史变体；是否执行取决于入口导入 |
-| [apps/react-gpu-ui/src/combined.jsx](../../apps/react-gpu-ui/src/combined.jsx) | React 可视化方案/历史变体；是否执行取决于入口导入 |
-| [apps/react-gpu-ui/src/compact.jsx](../../apps/react-gpu-ui/src/compact.jsx) | React 可视化方案/历史变体；是否执行取决于入口导入 |
-| [apps/react-gpu-ui/src/final-safe.jsx](../../apps/react-gpu-ui/src/final-safe.jsx) | React 可视化方案/历史变体；是否执行取决于入口导入 |
-| [apps/react-gpu-ui/src/final.jsx](../../apps/react-gpu-ui/src/final.jsx) | React 可视化方案/历史变体；是否执行取决于入口导入 |
-| [apps/react-gpu-ui/src/main.jsx](../../apps/react-gpu-ui/src/main.jsx) | React 可视化方案/历史变体；是否执行取决于入口导入 |
-| [apps/react-gpu-ui/src/profiler-layout.css](../../apps/react-gpu-ui/src/profiler-layout.css) | 浏览器讲解页面的样式和布局，不参与推理 |
-| [apps/react-gpu-ui/src/profiler.jsx](../../apps/react-gpu-ui/src/profiler.jsx) | React 可视化方案/历史变体；是否执行取决于入口导入 |
-| [apps/react-gpu-ui/src/root-structure.css](../../apps/react-gpu-ui/src/root-structure.css) | 浏览器讲解页面的样式和布局，不参与推理 |
-| [apps/react-gpu-ui/src/root-structure.jsx](../../apps/react-gpu-ui/src/root-structure.jsx) | React 可视化方案/历史变体；是否执行取决于入口导入 |
-| [apps/react-gpu-ui/src/safe.jsx](../../apps/react-gpu-ui/src/safe.jsx) | React 可视化方案/历史变体；是否执行取决于入口导入 |
-| [apps/react-gpu-ui/src/safe2.jsx](../../apps/react-gpu-ui/src/safe2.jsx) | 当前 React 入口，显示运行过程与事件 |
-| [apps/react-gpu-ui/src/styles.css](../../apps/react-gpu-ui/src/styles.css) | 浏览器讲解页面的样式和布局，不参与推理 |
-| [apps/react-gpu-ui/src/three-app.jsx](../../apps/react-gpu-ui/src/three-app.jsx) | React 可视化方案/历史变体；是否执行取决于入口导入 |
-| [apps/react-gpu-ui/src/variables.css](../../apps/react-gpu-ui/src/variables.css) | 浏览器讲解页面的样式和布局，不参与推理 |
-| [apps/react-gpu-ui/vite.config.js](../../apps/react-gpu-ui/vite.config.js) | 可视化开发/构建配置与资源 base |
-| [apps/ui_compare.html](../../apps/ui_compare.html) | 多种讲解布局的原型 |
-| [apps/ui_console.html](../../apps/ui_console.html) | 事件、矩阵、线程示意的控制台原型 |
-| [apps/ui_stage.html](../../apps/ui_stage.html) | 执行阶段示意页面 |
-| [apps/ui_variants.html](../../apps/ui_variants.html) | 界面布局变体原型 |
+| [deploy/web/index.html](../../deploy/web/index.html) | 真实推理回放页面入口 |
+| [deploy/web/inference.js](../../deploy/web/inference.js) | 推理阶段回放、事件查询与源码讲解 |
+| [deploy/web/inference.css](../../deploy/web/inference.css) | 回放页面样式 |
+| [deploy/web/trace_data.js](../../deploy/web/trace_data.js) | Influx CSV 解析、Run 隔离与阶段统计 |
+| [deploy/web/tutorial.html](../../deploy/web/tutorial.html) | 18 节数学与 GPU 动画课程入口 |
+| [deploy/web/tutorial-lessons.js](../../deploy/web/tutorial-lessons.js) | 课程内容、公式与源码映射 |
+| [deploy/web/tutorial-math.js](../../deploy/web/tutorial-math.js) | 教学计算与动画使用的数学函数 |
+| [deploy/web/tutorial.js](../../deploy/web/tutorial.js) | 教程交互、播放与绘图 |
+| [deploy/web/tutorial.css](../../deploy/web/tutorial.css) | 教程页面样式 |
+
+示意图中的节点状态或线程格子用于解释执行过程；判断当前实现时，应回到 `apps/hush_mic_ui.mm`、`src/hush_session.cpp` 和 `src/backend/metal_backend.mm` 的实际调用链。
 
 ## App 资源
 

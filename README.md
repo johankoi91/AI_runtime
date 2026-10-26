@@ -249,8 +249,7 @@ Metal trace 现在还会记录设备和 pipeline 就绪、Node ready、输入读
 
 ### 打开动画讲解界面
 
-如果想直观看每一步怎么流转，可以直接打开 `apps/metal_visualizer.html`，点击“从头运行”。
-它会像一个小型 GPU profiler 一样展示代码高亮、Tensor shape/stride、Host buffer、Metal shared buffer、GPU 线程格子、矩阵单元格计算和事件日志；可以暂停、单步和调速。
+打开 `http://81.71.150.26/tutorial.html`，可以按课程章节观看采样、Tensor、频谱、Conv、GRU、Deep Filter、ISTFT 和 Metal 线程的动画讲解；打开 `http://81.71.150.26/` 可以回放 App 上报的真实 Hush 推理事件。
 
 ## 目录结构
 
@@ -262,7 +261,20 @@ src/kernels/cpu/        CPU kernel
 apps/demo.cpp           最小可运行示例
 tests/runtime_tests.cpp 轻量测试
 docs/                   学习路线和任务文档
+deploy/web/             真实推理回放与数学动画教程
+build-app/              本机 App、模型和交付包（不提交 Git）
 ```
+
+`build/`、`build-metal/`、前端依赖、旧安装包和历史诊断输出已清理。当前可直接运行 `build-app/bin/hush_mic_ui.app`；重新编译或运行测试前，先生成构建配置：
+
+```bash
+cmake -S . -B build-app -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+  -DHUSH_MODEL_BUNDLE_PATH="$PWD/build-app/models/hush-real-model.tar.gz"
+cmake --build build-app --parallel
+ctest --test-dir build-app --output-on-failure
+```
+
+模型、App 和压缩包是本机交付物；新克隆仓库需要先下载真实模型 bundle，再通过 `HUSH_MODEL_BUNDLE_PATH` 指定其位置。
 
 ## 学习文档
 
