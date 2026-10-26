@@ -19,7 +19,11 @@
 
 节点详情限前 1024 个节点。阶段记录前 3 批，之后单帧每 100 批、批处理每 4 批采样；底层已有 Metal 事件随阶段采样。前端与合成当前在 CPU 执行；节点按真实分支标记 CPU 或 Metal。时间是主机调用墙钟耗时，包含同步和采集开销，并非 GPU 硬件 profiler 结果。
 
-上传仅包含计时、形状、计数和内存字节数，不包含录音样本或 Tensor 数值。后台线程将事件按完整行切为不超过 64 KiB 的请求，避免 Nginx 的请求体上限；低流量约每 500 ms 发送。待上传与在途文本合计限制为 2 MiB；失败会重试，缓存满时丢弃新事件并计数。运行结束通过 `run_complete` 标记，无需退出 App 才上传。意外退出或长时间离线可能丢失未上传事件。
+上传仅包含计时、形状、计数和内存字节数，不包含录音样本或 Tensor 数值。采集端使用预分配的固定记录环形队列，emit 只复制原始字段和计时；不分配堆内存，不编码 Influx 文本，不做网络或文件 I/O。入队只尝试一次 try_lock，遇到锁竞争、队列满或字段过长时立即丢弃并计数；stage/event 各限 64 字节，detail 限 512 字节。这里优先保证 Hush 不等待，不保证事件零丢失。
+
+后台 utility 优先级线程独立轮询队列（空队列约每 10 ms），完成转义、文本编码和不超过 64 KiB 的 HTTP 请求。预分配记录占用不超过默认 2 MiB，上报批文本额外最多 64 KiB；在途事件也占用队列额度，网络卡住不会无限积累。失败仅由后台重试。
+
+销毁 InfluxDbSink 只设置结束标记，不 join、不 flush；后台通过共享状态持有自己的资源并尝试限时收尾。因此 App 切换测试、离线处理完成或关闭采集，都不等待网络。独立 CLI 验收工具可在推理结束后显式 flush；不要在音频回调、推理循环或持有音频锁时调用 flush。意外退出或长时间离线可能丢失未上传事件。
 
 App 因现有服务器使用 HTTP/IP，包含 macOS ATS HTTP 访问例外；服务地址与认证可用 `INFLUXDB_URL/ORG/BUCKET/TOKEN` 覆盖。设置 `HUSH_TRACE_ENABLED=0` 可关闭 App 上传。
 
@@ -30,11 +34,15 @@ cmake --build build-app --parallel
 ctest --test-dir build-app --output-on-failure
 node tests/web_trace_tests.js
 python3 tests/verify_influx_trace.py --probe build-app/bin/influx_trace_probe
+python3 tests/verify_influx_trace.py --probe build-app/bin/influx_trace_probe \
+  --bundle "$PWD/build-app/models/hush-real-model.tar.gz"
 HUSH_MODEL_BUNDLE="$PWD/build-app/models/hush-real-model.tar.gz" \
   HUSH_MEMORY_ITERATIONS=128 build-app/bin/hush_memory_tests
 ```
 
 Runtime 回归检查阶段顺序、节点设备、异常事件、取消绑定及音频数值不变。HTTP 自测使用本地服务器检查并发序列、CSV 所需转义、失败重试、flush 与队列上限，不写入线上。网页自测覆盖多个 Influx 表、逗号/引号、微秒排序及 Run ID 隔离。
+
+非阻塞回归会让本地 HTTP 服务收到请求后暂停响应，再执行 10 万次 emit、队列满压测和 sink 销毁；同一请求保持暂停时，再用真实 bundle 运行 32 帧 Metal Hush 推理。测试检查 emit 的堆分配为 0、p99 小于 1 ms、总循环小于 1 秒、析构小于 100 ms，并确认实际推理完成。一次本机结果为 emit 总计约 6.4 ms、p99 约 0.083 微秒、析构约 0.0002 ms；这些是该测试的采集端耗时，不是 Hush 推理延迟或硬实时保证。
 
 2026-10-26 实测背景人声按钮产生 3158 条事件，3158 条上传成功、丢弃 0，网页显示 `REAL HUSH TRACE` 并正确定位 Run ID。真实模型 probe 产生 1598 条事件、全部上传；128 次单帧/128 次 32 帧内存测试约 23.7/28.7 MiB，未出现持续增长。用户重新授权后，麦克风已实际运行并上传事件。
 

@@ -211,5 +211,9 @@ int main() {
     return 1;
   }
   std::cout << "Metal ISTFT test passed (max error=" << max_error << ")\n";
+  if (trace.enabled() && !trace.flush()) {
+    std::cerr << "Metal trace upload incomplete\n";
+    return 1;
+  }
   return 0;
 }

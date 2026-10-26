@@ -39,7 +39,7 @@ class InfluxDbSink final : public TraceSink {
       std::string_view event,
       std::string_view detail,
       std::size_t bytes = 0,
-      double duration_ms = 0.0) override;
+      double duration_ms = 0.0) noexcept override;
 
   bool enabled() const;
   const std::string& run_id() const;
@@ -48,7 +48,7 @@ class InfluxDbSink final : public TraceSink {
 
  private:
   struct Impl;
-  std::unique_ptr<Impl> impl_;
+  std::shared_ptr<Impl> impl_;
 };
 
 }  // namespace runtime

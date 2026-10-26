@@ -12,6 +12,12 @@
 #include <thread>
 #include <utility>
 #include <algorithm>
+#include <array>
+#include <atomic>
+#include <cstring>
+#include <vector>
+#include <pthread.h>
+#include <sys/qos.h>
 
 namespace runtime {
 
@@ -105,63 +111,160 @@ std::string send_batch(
 }  // namespace
 
 struct InfluxDbSink::Impl {
+  struct Event {
+    std::array<char, 64> stage{};
+    std::array<char, 64> event{};
+    std::array<char, 512> detail{};
+    std::size_t stage_size = 0;
+    std::size_t event_size = 0;
+    std::size_t detail_size = 0;
+    std::size_t bytes = 0;
+    std::size_t sequence = 0;
+    std::int64_t timestamp = 0;
+    double duration_ms = 0;
+  };
   InfluxDbConfig config;
-  mutable std::mutex mutex;
+  std::mutex queue_mutex;
+  std::vector<Event> events;
+  std::size_t head = 0;
+  std::size_t tail = 0;
+  std::size_t count = 0;
+  std::atomic<std::size_t> accepted{0};
+  std::atomic<std::size_t> uploaded{0};
+  std::atomic<std::size_t> dropped{0};
+  std::atomic<std::size_t> outstanding{0};
+  mutable std::mutex status_mutex;
   std::condition_variable wake;
-  std::thread worker;
-  std::string pending_lines;
-  std::size_t pending_events = 0;
-  std::size_t in_flight_bytes = 0;
-  InfluxDbStatus status;
-  std::size_t sequence = 0;
-  std::int64_t last_timestamp = 0;
-  bool stopping = false;
-  bool requested = false;
+  std::string error;
+  std::atomic_bool stopping{false};
+
+  bool pop(Event& event) {
+    std::lock_guard lock(queue_mutex);
+    if (count == 0) return false;
+    event = events[head];
+    head = (head + 1) % events.size();
+    --count;
+    return true;
+  }
+
+  std::string encode(const Event& event, std::int64_t& last_timestamp) const {
+    const auto timestamp = std::max(event.timestamp, last_timestamp + 1);
+    last_timestamp = timestamp;
+    return "runtime_trace,stage=" + escape_tag(std::string(event.stage.data(), event.stage_size)) +
+        ",run_id=" + escape_tag(config.run_id) +
+        " event=\"" + escape_field(std::string(event.event.data(), event.event_size)) +
+        "\",detail=\"" + escape_field(std::string(event.detail.data(), event.detail_size)) +
+        "\",sequence=" + std::to_string(event.sequence) + "i,bytes=" +
+        std::to_string(event.bytes) + "i,duration_ms=" + std::to_string(event.duration_ms) +
+        " " + std::to_string(timestamp) + "\n";
+  }
 
   void upload() {
-    constexpr std::size_t kUploadBatchBytes = 64 * 1024;
-    std::unique_lock lock(mutex);
-    while (!stopping || !pending_lines.empty()) {
-      wake.wait_for(lock, std::chrono::milliseconds(500), [&] {
-        return stopping || requested || !pending_lines.empty();
-      });
-      requested = false;
-      if (pending_lines.empty()) continue;
-      const std::size_t limit = std::min(kUploadBatchBytes, pending_lines.size());
-      std::size_t end = pending_lines.rfind('\n', limit - 1);
-      if (end == std::string::npos) end = pending_lines.find('\n');
-      if (end == std::string::npos) continue;
-      ++end;
-      std::string lines = pending_lines.substr(0, end);
-      pending_lines.erase(0, end);
-      const std::size_t count = static_cast<std::size_t>(
-          std::count(lines.begin(), lines.end(), '\n'));
-      pending_events -= count;
-      in_flight_bytes = lines.size();
-      lock.unlock();
-      std::string error;
-      @autoreleasepool {
-        error = send_batch(config.url, config.org, config.bucket, config.token, lines);
+    std::int64_t last_timestamp = 0;
+    auto stop_deadline = std::chrono::steady_clock::time_point::max();
+    std::string lines;
+    std::size_t batch_events = 0;
+    Event event;
+    while (true) {
+      if (stopping.load() && stop_deadline == std::chrono::steady_clock::time_point::max())
+        stop_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+      if (std::chrono::steady_clock::now() >= stop_deadline) break;
+      while (lines.size() < 60 * 1024 && pop(event)) {
+        std::string line = encode(event, last_timestamp);
+        if (line.size() > 4 * 1024) {
+          dropped.fetch_add(1);
+          outstanding.fetch_sub(1);
+          continue;
+        }
+        lines += line;
+        ++batch_events;
       }
-      lock.lock();
-      in_flight_bytes = 0;
-      status.error = error;
-      if (error.empty()) {
-        status.uploaded_events += count;
-      } else if (!stopping) {
-        pending_lines.insert(0, std::move(lines));
-        pending_events += count;
-      } else {
-        status.dropped_events += count;
+      if (lines.empty()) {
+        if (stopping.load()) break;
+        std::unique_lock lock(status_mutex);
+        wake.wait_for(lock, std::chrono::milliseconds(10));
+        continue;
+      }
+      std::string upload_error;
+      @autoreleasepool {
+        upload_error = send_batch(config.url, config.org, config.bucket, config.token, lines);
+      }
+      {
+        std::lock_guard lock(status_mutex);
+        error = upload_error;
+        if (upload_error.empty()) {
+          uploaded.fetch_add(batch_events);
+          outstanding.fetch_sub(batch_events);
+          lines.clear();
+          batch_events = 0;
+        }
       }
       wake.notify_all();
-      if (!error.empty() && !stopping)
-        wake.wait_for(lock, std::chrono::seconds(2), [&] { return stopping; });
+      if (!upload_error.empty()) {
+        if (stopping.load()) break;
+        std::unique_lock lock(status_mutex);
+        wake.wait_for(lock, std::chrono::seconds(2), [&] { return stopping.load(); });
+      }
     }
+    {
+      std::lock_guard lock(queue_mutex);
+      stopping.store(true);
+      dropped.fetch_add(outstanding.exchange(0));
+    }
+    wake.notify_all();
+  }
+
+  void fail() {
+    std::lock_guard lock(status_mutex);
+    std::lock_guard queue_lock(queue_mutex);
+    error = "trace upload worker failed";
+    dropped.fetch_add(outstanding.exchange(0));
+    stopping.store(true);
+    wake.notify_all();
+  }
+
+  void start(const std::shared_ptr<Impl>& state) {
+    std::thread([state] {
+      pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0);
+      try {
+        state->upload();
+      } catch (...) {
+        state->fail();
+      }
+    }).detach();
+  }
+
+  void enqueue(std::string_view stage, std::string_view name, std::string_view detail,
+               std::size_t bytes, double duration_ms) noexcept {
+    if (stopping.load() || stage.size() > Event{}.stage.size() ||
+        name.size() > Event{}.event.size() || detail.size() > Event{}.detail.size()) {
+      dropped.fetch_add(1);
+      return;
+    }
+    std::unique_lock lock(queue_mutex, std::try_to_lock);
+    if (!lock.owns_lock() || stopping.load() || outstanding.load() >= events.size()) {
+      dropped.fetch_add(1);
+      return;
+    }
+    Event& event = events[tail];
+    if (!stage.empty()) std::memcpy(event.stage.data(), stage.data(), stage.size());
+    if (!name.empty()) std::memcpy(event.event.data(), name.data(), name.size());
+    if (!detail.empty()) std::memcpy(event.detail.data(), detail.data(), detail.size());
+    event.stage_size = stage.size();
+    event.event_size = name.size();
+    event.detail_size = detail.size();
+    event.bytes = bytes;
+    event.duration_ms = duration_ms;
+    event.timestamp = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    event.sequence = accepted.fetch_add(1) + 1;
+    outstanding.fetch_add(1);
+    tail = (tail + 1) % events.size();
+    ++count;
   }
 };
 
-InfluxDbSink::InfluxDbSink(InfluxDbConfig config) : impl_(std::make_unique<Impl>()) {
+InfluxDbSink::InfluxDbSink(InfluxDbConfig config) : impl_(std::make_shared<Impl>()) {
   auto configure = [](std::string& value, const char* name) {
     const std::string environment = env_or_empty(name);
     if (!environment.empty()) value = environment;
@@ -174,16 +277,15 @@ InfluxDbSink::InfluxDbSink(InfluxDbConfig config) : impl_(std::make_unique<Impl>
   if (config.run_id.empty()) config.run_id = make_run_id();
   while (!config.url.empty() && config.url.back() == '/') config.url.pop_back();
   impl_->config = std::move(config);
-  if (enabled()) impl_->worker = std::thread([this] { impl_->upload(); });
+  if (enabled()) {
+    impl_->events.resize(impl_->config.max_pending_bytes / sizeof(Impl::Event));
+    impl_->start(impl_);
+  }
 }
 
 InfluxDbSink::~InfluxDbSink() {
-  {
-    std::lock_guard lock(impl_->mutex);
-    impl_->stopping = true;
-  }
+  impl_->stopping.store(true);
   impl_->wake.notify_all();
-  if (impl_->worker.joinable()) impl_->worker.join();
 }
 
 bool InfluxDbSink::enabled() const {
@@ -197,22 +299,25 @@ const std::string& InfluxDbSink::run_id() const {
 }
 
 InfluxDbStatus InfluxDbSink::status() const {
-  std::lock_guard lock(impl_->mutex);
-  auto status = impl_->status;
-  status.pending_bytes = impl_->pending_lines.size() + impl_->in_flight_bytes;
+  InfluxDbStatus status;
+  status.accepted_events = impl_->accepted.load();
+  status.uploaded_events = impl_->uploaded.load();
+  status.dropped_events = impl_->dropped.load();
+  status.pending_bytes = impl_->outstanding.load() * sizeof(Impl::Event);
+  std::lock_guard lock(impl_->status_mutex);
+  status.error = impl_->error;
   return status;
 }
 
 bool InfluxDbSink::flush(std::chrono::milliseconds timeout) {
   if (!enabled()) return false;
-  std::unique_lock lock(impl_->mutex);
-  const std::size_t target = impl_->status.accepted_events;
-  impl_->requested = true;
+  const std::size_t target = impl_->accepted.load();
+  std::unique_lock lock(impl_->status_mutex);
   impl_->wake.notify_all();
   const bool complete = impl_->wake.wait_for(lock, timeout, [&] {
-    return impl_->status.uploaded_events >= target || impl_->stopping;
+    return impl_->uploaded.load() >= target || impl_->stopping.load();
   });
-  return complete && impl_->status.uploaded_events >= target && impl_->status.dropped_events == 0;
+  return complete && impl_->uploaded.load() >= target && impl_->dropped.load() == 0;
 }
 
 void InfluxDbSink::emit(
@@ -220,37 +325,9 @@ void InfluxDbSink::emit(
     std::string_view event,
     std::string_view detail,
     std::size_t bytes,
-    double duration_ms) {
+    double duration_ms) noexcept {
   if (!enabled()) return;
-  std::lock_guard lock(impl_->mutex);
-
-  auto timestamp = std::chrono::duration_cast<std::chrono::nanoseconds>(
-      std::chrono::system_clock::now().time_since_epoch()).count();
-  if (timestamp <= impl_->last_timestamp) {
-    timestamp = impl_->last_timestamp + 1;
-  }
-  impl_->last_timestamp = timestamp;
-  ++impl_->sequence;
-  std::string line = "runtime_trace,stage=" + escape_tag(std::string(stage)) +
-      ",run_id=" + escape_tag(impl_->config.run_id) +
-      " event=\"" + escape_field(std::string(event)) +
-      "\",detail=\"" + escape_field(std::string(detail)) +
-      "\",sequence=" + std::to_string(impl_->sequence) + "i" +
-      ",bytes=" + std::to_string(bytes) + "i" +
-      ",duration_ms=" + std::to_string(duration_ms) + " " +
-      std::to_string(timestamp);
-
-  if (line.size() + 1 > 64 * 1024 ||
-      impl_->pending_lines.size() + impl_->in_flight_bytes + line.size() + 1 >
-      impl_->config.max_pending_bytes) {
-    ++impl_->status.dropped_events;
-    return;
-  }
-  impl_->pending_lines += line;
-  impl_->pending_lines.push_back('\n');
-  ++impl_->pending_events;
-  ++impl_->status.accepted_events;
-  if (impl_->pending_lines.size() >= 256 * 1024) impl_->wake.notify_one();
+  impl_->enqueue(stage, event, detail, bytes, duration_ms);
 }
 
 }  // namespace runtime
