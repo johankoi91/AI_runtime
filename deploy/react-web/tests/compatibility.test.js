@@ -6,6 +6,7 @@ import vm from "node:vm";
 
 import lessons from "../src/lib/tutorial-lessons.js";
 import guidance from "../src/lib/lesson-guidance.js";
+import variableGlossary from "../src/lib/lesson-variable-glossary.js";
 import math from "../src/lib/tutorial-math.js";
 import { getFrameCount, renderTutorialFrame } from "../src/tutorial/canvas-engine.js";
 
@@ -54,6 +55,16 @@ test("every lesson has a complete formula guide for the detailed React tutorial"
     assert.equal(guide.parts.length, 4, lesson.id);
     guide.parts.forEach(([symbol, explanation]) => {
       assert.ok(symbol && explanation, lesson.id);
+    });
+  }
+});
+
+test("every lesson explains the variables used in its equations", () => {
+  assert.equal(Object.keys(variableGlossary).length, lessons.length);
+  for (const lesson of lessons) {
+    assert.ok(variableGlossary[lesson.id].length >= 4, lesson.id);
+    variableGlossary[lesson.id].forEach(([symbol, meaning]) => {
+      assert.ok(symbol && meaning, lesson.id);
     });
   }
 });
