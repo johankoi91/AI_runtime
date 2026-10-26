@@ -2,517 +2,132 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Hush runtime / Metal pipeline</title>
-  <style>
-    :root {
-      color-scheme: dark;
-      --bg: #08111f;
-      --panel: #101d31;
-      --panel-2: #162944;
-      --line: #2b4165;
-      --text: #edf5ff;
-      --muted: #9db0ce;
-      --blue: #68bbff;
-      --cyan: #70e6df;
-      --green: #62dfb0;
-      --orange: #ffc36d;
-      --purple: #bd9dff;
-      --red: #ff8e9d;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      color: var(--text);
-      background: radial-gradient(circle at 80% 0, #254878 0, var(--bg) 46%);
-      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }
-    button, input, select {
-      border: 1px solid var(--line);
-      border-radius: 7px;
-      padding: 8px 10px;
-      color: var(--text);
-      background: var(--panel-2);
-    }
-    button { cursor: pointer; font-weight: 650; }
-    button:hover { border-color: var(--cyan); }
-    button.primary { color: #06151a; border-color: var(--green); background: var(--green); }
-    code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-    h1, h2, h3, p { margin: 0; }
-    h1 { font-size: 27px; line-height: 1.2; }
-    h2 { font-size: 16px; }
-    h3 { font-size: 13px; }
-    .muted { color: var(--muted); }
-    .app { max-width: 1480px; margin: auto; padding: 22px; }
-    .top { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin-bottom: 15px; }
-    .top p { margin-top: 5px; color: var(--muted); }
-    .controls { display: flex; flex-wrap: wrap; justify-content: end; gap: 7px; }
-    .status {
-      min-height: 22px;
-      margin: 0 0 12px;
-      color: var(--green);
-      font-size: 13px;
-    }
-    .hero, .panel, .timeline, .trace-view, .config {
-      border: 1px solid var(--line);
-      border-radius: 11px;
-      background: #101d31ed;
-    }
-    .hero { padding: 17px 19px; margin-bottom: 13px; }
-    .hero h2 { margin-bottom: 6px; font-size: 19px; }
-    .hero p { color: #dce9fb; }
-    .hero-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 9px; margin-top: 13px; }
-    .hero-item { padding: 9px 11px; border-radius: 7px; background: #0c192b; color: var(--muted); }
-    .hero-item b { display: block; color: var(--orange); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
-    .hero-item span { display: block; margin-top: 2px; color: var(--text); }
-    .config { display: grid; grid-template-columns: 1.1fr 1fr 1fr 1fr auto; gap: 8px; padding: 11px; margin-bottom: 13px; }
-    .config label { display: grid; gap: 3px; color: var(--muted); font-size: 11px; }
-    .config input { width: 100%; font-size: 12px; }
-    .section-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 11px; }
-    .pill { padding: 3px 8px; border: 1px solid #286c75; border-radius: 99px; color: var(--cyan); font-size: 11px; white-space: nowrap; }
-    .pill.static { border-color: #7a5b2e; color: var(--orange); }
-    .pill.live { border-color: #2b7c68; color: var(--green); }
-    .pill.old { border-color: #744d61; color: var(--red); }
-    .flow { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-bottom: 13px; }
-    .flow-card {
-      min-height: 103px;
-      padding: 11px;
-      border: 1px solid var(--line);
-      border-top: 3px solid var(--blue);
-      border-radius: 9px;
-      background: #12233b;
-      transition: .2s;
-    }
-    .flow-card:nth-child(2) { border-top-color: var(--cyan); }
-    .flow-card:nth-child(3) { border-top-color: var(--purple); }
-    .flow-card:nth-child(4) { border-top-color: var(--orange); }
-    .flow-card:nth-child(5) { border-top-color: var(--green); }
-    .flow-card.active { border-color: var(--orange); background: #5b4529; box-shadow: 0 0 17px #ffc36d55; }
-    .flow-card.done { border-color: #3ca895; background: #173d3a; }
-    .flow-card b { display: block; font-size: 13px; }
-    .flow-card small { display: block; margin-top: 5px; color: var(--muted); line-height: 1.35; }
-    .timeline { padding: 14px; margin-bottom: 13px; }
-    .timeline-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 11px; }
-    .steps { display: grid; grid-template-columns: repeat(12, minmax(108px, 1fr)); gap: 6px; overflow-x: auto; padding-bottom: 2px; }
-    .step {
-      min-height: 78px;
-      padding: 8px;
-      border: 1px solid #294263;
-      border-left: 3px solid var(--blue);
-      border-radius: 7px;
-      background: #12233b;
-      cursor: pointer;
-    }
-    .step:nth-child(3), .step:nth-child(4) { border-left-color: var(--cyan); }
-    .step:nth-child(5), .step:nth-child(6), .step:nth-child(7) { border-left-color: var(--purple); }
-    .step:nth-child(8), .step:nth-child(9) { border-left-color: var(--orange); }
-    .step:nth-child(10), .step:nth-child(11), .step:nth-child(12) { border-left-color: var(--green); }
-    .step.active { border-color: var(--orange); background: #5b4529; box-shadow: 0 0 14px #ffc36d44; }
-    .step.done { opacity: .72; border-color: #3ca895; background: #173d3a; }
-    .step-no { color: var(--muted); font: 10px ui-monospace, monospace; }
-    .step b { display: block; margin-top: 2px; font-size: 11px; white-space: nowrap; }
-    .step small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; line-height: 1.2; }
-    .grid { display: grid; grid-template-columns: 1fr 1.3fr 1fr; gap: 13px; align-items: start; }
-    .panel { min-width: 0; padding: 14px; }
-    .panel + .panel { margin-top: 13px; }
-    .fact { display: flex; justify-content: space-between; gap: 10px; padding: 7px 0; border-bottom: 1px solid #263957; color: var(--muted); }
-    .fact b { color: var(--text); font-weight: 500; text-align: right; }
-    .code { overflow: auto; padding: 7px 0; border-radius: 7px; background: #080f1b; }
-    .line { display: grid; grid-template-columns: 28px 1fr; padding: 3px 9px; color: #8da2c0; font: 12px/1.5 ui-monospace, monospace; }
-    .line span:first-child { padding-right: 7px; color: #526888; text-align: right; }
-    .line.active { color: var(--text); background: #304c70; box-shadow: inset 3px 0 var(--orange); }
-    .tensor { margin: 10px 0; padding: 11px; border: 1px solid #294263; border-radius: 7px; background: #0b182b; }
-    .tensor-head { display: flex; justify-content: space-between; gap: 8px; }
-    .tensor-head b { color: var(--cyan); }
-    .tensor-head span { color: var(--muted); font: 11px ui-monospace, monospace; }
-    .tensor p { margin-top: 5px; color: var(--muted); font-size: 12px; }
-    .tensor .bar { height: 8px; margin-top: 9px; border-radius: 99px; background: linear-gradient(90deg, var(--blue), var(--purple), var(--green)); }
-    .matrix { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; margin-top: 10px; }
-    .cell { padding: 8px 3px; border-radius: 5px; color: var(--text); background: #203453; font: 11px ui-monospace, monospace; text-align: center; }
-    .cell.hot { color: #21180d; background: var(--orange); }
-    .state-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px; }
-    .state { padding: 9px; border: 1px solid #294263; border-radius: 7px; background: #12233b; }
-    .state b { display: block; color: var(--text); font-size: 12px; }
-    .state span { display: block; margin-top: 4px; color: var(--muted); font: 11px ui-monospace, monospace; }
-    .state.on { border-color: var(--orange); background: #5b4529; }
-    .state.done { border-color: #3ca895; background: #173d3a; }
-    .callout { margin-top: 11px; padding: 10px; border-left: 3px solid var(--orange); border-radius: 5px; background: #1a2a44; color: #dce9fb; font-size: 12px; }
-    .callout strong { color: var(--orange); }
-    .trace-view { padding: 14px; margin-top: 13px; }
-    .trace-view p { margin: 4px 0 11px; color: var(--muted); font-size: 12px; }
-    .trace-box { overflow: auto; padding: 9px; border-radius: 7px; background: #080f1b; }
-    .trace-row { display: grid; grid-template-columns: 115px 1fr; min-width: 800px; min-height: 42px; border-bottom: 1px solid #1c304b; }
-    .trace-label { padding: 10px 8px 8px 2px; color: var(--muted); font-size: 11px; }
-    .trace-lane { position: relative; min-height: 42px; background: repeating-linear-gradient(90deg, transparent 0, transparent calc(10% - 1px), #1b304a calc(10% - 1px), #1b304a 10%); }
-    .trace-bar { position: absolute; top: 9px; min-width: 8px; height: 24px; padding: 3px 6px; overflow: hidden; border-radius: 5px; color: #06121d; background: var(--blue); font-size: 10px; font-weight: 650; white-space: nowrap; text-overflow: ellipsis; }
-    .trace-bar.metal { background: var(--purple); }
-    .trace-bar.cpu { background: var(--orange); }
-    .trace-bar.memory { background: var(--green); }
-    .trace-empty { padding: 12px 2px; color: var(--muted); font-size: 12px; }
-    .log { height: 220px; overflow: auto; padding: 8px; border-radius: 7px; background: #080f1b; color: #acc0dc; font: 11px/1.65 ui-monospace, monospace; }
-    .log div::before { content: "› "; color: var(--green); }
-    .legend { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
-    .legend span { padding: 3px 7px; border: 1px solid var(--line); border-radius: 99px; color: var(--muted); font-size: 11px; }
-    .legend .static { border-color: #7a5b2e; color: var(--orange); }
-    .legend .real { border-color: #2b7c68; color: var(--green); }
-    .legend .old { border-color: #744d61; color: var(--red); }
-    @media (max-width: 1050px) {
-      .grid { grid-template-columns: 1fr 1fr; }
-      .grid > :last-child { grid-column: 1 / -1; }
-      .flow { grid-template-columns: repeat(3, 1fr); }
-      .hero-grid { grid-template-columns: repeat(2, 1fr); }
-      .config { grid-template-columns: 1fr 1fr; }
-      .config button { grid-column: 1 / -1; }
-    }
-    @media (max-width: 650px) {
-      .app { padding: 13px; }
-      .top { display: block; }
-      .controls { justify-content: start; margin-top: 11px; }
-      .hero-grid, .flow, .grid { grid-template-columns: 1fr; }
-      .config { display: block; }
-      .config label, .config button { width: 100%; margin-bottom: 7px; }
-      .state-grid { grid-template-columns: 1fr; }
-    }
-  </style>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Hush runtime · 真实推理流程</title>
+  <link rel="stylesheet" href="/inference.css?v=20261026-1">
 </head>
 <body>
 <main class="app">
-  <header class="top">
+  <header class="header">
     <div>
-      <h1>Hush runtime / Metal pipeline</h1>
-      <p>从麦克风或 WAV，到 10 ms Hush 输出帧：前端、三张 ONNX 子图、流状态和 ISTFT。</p>
+      <div class="eyebrow">HUSH / RUNTIME INSPECTOR</div>
+      <h1>看懂一次真实推理</h1>
+      <p>声音如何进入模型，数据怎样经过 CPU / Metal，又如何回到连续音频。</p>
     </div>
-    <div class="controls">
-      <button class="primary" id="play">▶ 播放流程</button>
-      <button id="pause">Ⅱ 暂停</button>
+    <span class="badge lesson" id="modeBadge">源码讲解</span>
+  </header>
+
+  <section class="panel connection">
+    <div class="toolbar">
+      <label class="field run-field">选择一次测试
+        <select id="traceRun"><option value="">正在读取最近运行…</option></select>
+      </label>
+      <label class="field batch-field">查看帧 / 批次
+        <select id="batchSelect" disabled><option value="">等待真实事件</option></select>
+      </label>
+      <button id="reloadTrace">刷新事件</button>
+      <label class="check"><input type="checkbox" id="autoTrace">每 10 秒刷新</label>
+      <button id="lesson">源码讲解</button>
+    </div>
+    <p class="status" id="connectionStatus" role="status">没有真实运行时，也可以使用源码讲解模式。</p>
+    <details>
+      <summary>数据连接设置</summary>
+      <form class="config" id="config">
+        <label class="field">Influx API<input id="api" value="/influx"></label>
+        <label class="field">组织<input id="org" value="mini-runtime"></label>
+        <label class="field">Bucket<input id="bucket" value="mini-runtime"></label>
+        <label class="field">Token<input id="token" value="mini-runtime-local-token" type="password" autocomplete="off"></label>
+        <button type="submit">连接并加载</button>
+      </form>
+    </details>
+  </section>
+
+  <section class="metrics" aria-label="本次推理概览">
+    <div class="metric"><small>当前音频范围</small><strong id="frameMetric">160 samples</strong><span id="frameHint">输入契约 · 16 kHz 单声道</span></div>
+    <div class="metric"><small>本次推理总耗时</small><strong id="latencyMetric">—</strong><span id="latencyHint">源码讲解不生成实测耗时</span></div>
+    <div class="metric"><small>音频时长 / 处理模式</small><strong id="audioMetric">10 ms</strong><span id="audioHint">音频帧时长不等于推理延迟</span></div>
+    <div class="metric"><small>观测覆盖</small><strong id="coverageMetric">讲解模式</strong><span id="coverageHint">真实事件加载后显示已采集阶段</span></div>
+  </section>
+
+  <section class="panel" id="realTrace">
+    <div class="section-title">
+      <h2>音频 → 模型 → 音频</h2>
+      <span class="badge" id="eventBadge">FLOW</span>
+    </div>
+    <div class="pipeline-title"><p id="flowHint">选择一个节点，查看它处理的数据和实际执行位置。</p></div>
+    <div class="io-strip">
+      <button data-phase="input">输入 · Mic / WAV → 16 kHz mono → 160 samples / frame</button>
+      <button data-phase="output">输出 · AudioFrame → WAV / 播放</button>
+    </div>
+    <div class="pipeline" style="margin-top:12px">
+      <button class="graph-node" data-phase="frontend" id="flow-frontend"><span class="device">CPU</span><b>① 前端特征</b><small>Vorbis · STFT · ERB / DF</small><span class="node-bottom">[1,161,2] → 两路特征</span></button>
+      <span class="arrow" aria-hidden="true">→</span>
+      <button class="graph-node" data-phase="encoder" id="flow-encoder"><span class="device mixed">CPU + Metal</span><b>② Encoder</b><small>enc.onnx</small><span class="node-bottom">e0…e3 · emb · c0 · lsnr</span></button>
+      <span class="arrow" aria-hidden="true">→</span>
+      <div class="branch">
+        <button class="graph-node" data-phase="erb" id="flow-erb"><span class="device mixed">CPU + Metal</span><b>③ ERB decoder</b><small>erb_dec.onnx → m</small><span class="node-bottom">频带增益</span></button>
+        <button class="graph-node" data-phase="df" id="flow-df"><span class="device mixed">CPU + Metal</span><b>④ DF decoder</b><small>df_dec.onnx → coefs</small><span class="node-bottom">复数滤波系数</span></button>
+      </div>
+      <span class="arrow" aria-hidden="true">→</span>
+      <div class="branch">
+        <button class="graph-node" data-phase="mask" id="flow-mask"><span class="device">CPU</span><b>⑤ ERB mask</b><small>频带增益 → 频点</small><span class="node-bottom">保留高频部分</span></button>
+        <button class="graph-node" data-phase="deep_filter" id="flow-deep_filter"><span class="device">CPU</span><b>⑥ Deep filter</b><small>低频原始频谱 + 历史</small><span class="node-bottom">组合增强频谱</span></button>
+      </div>
+      <span class="arrow" aria-hidden="true">→</span>
+      <button class="graph-node" data-phase="synthesis" id="flow-synthesis"><span class="device">CPU</span><b>⑦ ISTFT / OLA</b><small>逆变换 · overlap-add</small><span class="node-bottom">160 samples / frame</span></button>
+    </div>
+    <button class="state-strip" id="flow-state" data-phase="state" style="width:100%;text-align:left">
+      <span>↶ 跨帧状态 · 前端归一化 / GRU / causal Pad / DF / 合成历史</span><span id="stateSummary">独立于临时 MemoryPool</span>
+    </button>
+    <p class="muted" style="margin-top:9px">两张 decoder 共享 Encoder 输出，当前按 ERB → DF 顺序执行。低频 DF 使用原始频谱；高频取 ERB mask 结果。状态在各阶段更新后交给下一帧。</p>
+
+    <div class="player">
+      <button class="primary" id="play">▶ 回放流程</button>
+      <button id="pause" disabled>暂停</button>
       <button id="prev">← 上一步</button>
       <button id="next">下一步 →</button>
-      <button id="reset">↺ 重置</button>
+      <button id="reset">从头</button>
+      <label class="check"><input type="checkbox" id="nodeDetail">展开节点事件</label>
+      <label class="field">回放速度<select id="speed"><option value="1000">慢速</option><option value="650" selected>正常</option><option value="250">快速</option></select></label>
+      <span class="position" id="position">0 / 0</span>
     </div>
-  </header>
-  <div class="status" id="status">已载入静态 Hush runtime walkthrough；它描述当前实现，不冒充一次真实 trace。</div>
+    <div class="seek"><span>开始</span><input id="seek" type="range" min="0" max="0" value="0" aria-label="推理事件进度"><span id="elapsed">源码讲解</span></div>
+    <p class="muted" style="margin-top:8px">回放会放慢事件便于阅读；旁边的 ms 保留真实记录。前端只记录一个整体阶段，Vorbis / STFT / ERB 的内部耗时未单独采集。</p>
+  </section>
 
-  <section class="hero">
-    <h2>先抓住主线：每 10 ms 处理一帧音频</h2>
-    <p>Runtime 把输入切成固定的 16 kHz 单声道帧；Hush ONNX 图中的支持算子可走 Metal，当前 Hush 音频编排仍使用 CPU 参考前端、mask/deep-filter 和 overlap-add 重建。Metal STFT/ERB/ISTFT 原语已经具备，但尚未全部接入这条完整 session。</p>
-    <div class="hero-grid">
-      <div class="hero-item"><b>输入契约</b><span>16 kHz · mono · 160 samples</span></div>
-      <div class="hero-item"><b>模型</b><span>enc / erb_dec / df_dec</span></div>
-      <div class="hero-item"><b>设备</b><span>ONNX Metal + Hush CPU glue</span></div>
-      <div class="hero-item"><b>持久状态</b><span>GRU · causal pad · DF · synthesis</span></div>
+  <section class="workspace">
+    <article class="panel">
+      <div class="section-title"><h2 id="stageTitle">当前阶段</h2><span class="badge" id="deviceBadge">—</span></div>
+      <p class="explanation" id="stageExplanation"></p>
+      <div id="eventFacts"></div>
+      <div class="callout" id="stageNote"></div>
+      <p class="muted" id="sourcePath" style="margin-top:12px"></p>
+    </article>
+    <article class="panel">
+      <div class="section-title"><h2>数据怎样变化</h2><span class="badge" id="shapeBadge">契约说明</span></div>
+      <div id="tensorCards"></div>
+      <p class="muted">只采集 shape、字节数和时序。波形、Tensor 数值及人声内容不上传。</p>
+    </article>
+    <article class="panel">
+      <div class="section-title"><h2>阶段耗时</h2><span class="badge" id="timingBadge">未采集</span></div>
+      <div id="stageTimings"></div>
+      <p class="muted" style="margin-top:10px">阶段图统计已收到的完成事件；批次总耗时独立记录。缺失或采样事件不补零，不用部分耗时相加冒充整批耗时。</p>
+    </article>
+  </section>
+
+  <details class="panel secondary" id="eventDetails">
+    <summary>展开辅助信息：节点详情 / 原始事件 / 观测边界</summary>
+    <div class="detail-grid">
+      <section><h3>当前阶段已采集的节点</h3><div class="table-scroll" id="nodeTable"></div></section>
+      <section><h3>跨帧状态与观测边界</h3><div id="stateFacts"></div><div class="callout">Hush 前端、频谱增强和重建当前走 CPU。ONNX 的 Conv / 激活等支持算子走 Metal，GRU 和部分形状 / 广播算子走 CPU。上报有采样与非阻塞丢弃机制；未见事件不能解释成没执行。</div></section>
     </div>
-  </section>
-
-  <form class="config" id="config">
-    <label>Influx API<input id="api" value="/influx"></label>
-    <label>组织<input id="org" value="mini-runtime"></label>
-    <label>Bucket<input id="bucket" value="mini-runtime"></label>
-    <label>Token<input id="token" value="mini-runtime-local-token" type="password"></label>
-    <button class="primary" type="submit">加载真实 trace</button>
-  </form>
-
-  <section class="flow" id="flow">
-    <div class="flow-card" data-phase="0"><b>① 输入帧</b><small>Mic / WAV<br>16 kHz mono / 160 samples</small></div>
-    <div class="flow-card" data-phase="1"><b>② HushFrontend</b><small>Vorbis window<br>STFT → ERB / DF → normalization</small></div>
-    <div class="flow-card" data-phase="2"><b>③ ONNX graphs</b><small>enc.onnx → erb_dec.onnx<br>→ df_dec.onnx</small></div>
-    <div class="flow-card" data-phase="3"><b>④ Stream state</b><small>GRU / causal Pad / DF history<br>跨帧保留，不能被 pool.reset 覆盖</small></div>
-    <div class="flow-card" data-phase="4"><b>⑤ Synthesis</b><small>ERB mask + complex DF<br>overlap-add / ISTFT → Hush frame</small></div>
-  </section>
-
-  <section class="timeline">
-    <div class="timeline-head">
-      <div><h2>Hush 一帧的执行时间线</h2><span class="muted">点击步骤查看 Tensor、状态和执行位置</span></div>
-      <span class="pill static" id="mode">STATIC WALKTHROUGH</span>
-    </div>
-    <div class="steps" id="steps"></div>
-  </section>
-
-  <div class="grid">
-    <section class="panel">
-      <div class="section-title"><h2>当前步骤</h2><span class="pill" id="stepNo">1 / 11</span></div>
-      <h3 id="currentTitle"></h3>
-      <p class="muted" id="currentBody" style="margin-top:7px"></p>
-      <div class="callout" id="currentCallout"></div>
-      <div class="section-title" style="margin-top:15px"><h2>Runtime 代码位置</h2><span class="pill" id="stage">frontend</span></div>
-      <div class="code" id="code"></div>
-    </section>
-
-    <section class="panel">
-      <div class="section-title"><h2>Tensor inspector</h2><span class="pill" id="tensorMode">输入已就绪</span></div>
-      <div id="tensors"></div>
-      <div class="section-title" style="margin-top:15px"><h2>当前数据如何流动</h2><span class="pill">shape first</span></div>
-      <div class="matrix" id="matrix"></div>
-    </section>
-
-    <aside>
-      <section class="panel">
-        <div class="section-title"><h2>执行与状态</h2><span class="pill" id="backend">CPU + Metal</span></div>
-        <div class="state-grid" id="stateGrid"></div>
-        <div class="callout" id="backendNote"></div>
-      </section>
-      <section class="panel">
-        <div class="section-title"><h2>当前实现边界</h2><span class="pill old">HONEST STATUS</span></div>
-        <div class="fact"><span>权重 / pipeline</span><b>已预加载与缓存</b></div>
-        <div class="fact"><span>Hush 音频 glue</span><b>当前 CPU 参考路径</b></div>
-        <div class="fact"><span>临时内存</span><b>MemoryPool 复用</b></div>
-        <div class="fact"><span>异步执行</span><b>仍有逐算子同步</b></div>
-        <div class="fact"><span>算子覆盖</span><b>存在 CPU fallback</b></div>
-        <div class="fact"><span>音质结论</span><b>需用真实录音验收</b></div>
-      </section>
-    </aside>
-  </div>
-
-  <section class="trace-view" id="realTrace">
-    <div class="section-title"><h2>Trace / 证据来源</h2><span class="pill" id="traceStatus">STATIC</span></div>
-    <p id="traceDescription">当前显示的是基于源码和当前验收结果的静态 walkthrough。点击“加载真实 trace”后，页面会尝试读取 InfluxDB；没有数据时仍保留这条真实 Hush 流程。</p>
-    <div class="legend"><span class="static">静态 Hush walkthrough</span><span class="real">真实 Hush Influx trace</span><span class="old">旧版 MatMul / Add trace</span></div>
-    <div class="controls" style="justify-content:start;margin-bottom:12px">
-      <label>运行 <select id="traceRun" aria-label="选择一次运行"><option value="">暂无运行</option></select></label>
-      <button id="reloadTrace">刷新真实事件</button>
-      <label><input type="checkbox" id="autoTrace"> 每 10 秒刷新</label>
-    </div>
-    <p id="traceSummary"></p>
-    <div class="trace-box" id="traceBox"><div class="trace-empty">尚未加载真实事件。静态流程不会把旧的 MatMul → Add 事件伪装成 Hush。</div></div>
-  </section>
-
-  <section class="panel" style="margin-top:13px">
-    <div class="section-title"><h2>事件日志</h2><span class="pill">walkthrough</span></div>
-    <div class="log" id="log"></div>
-  </section>
+    <h3 style="margin-top:18px">原始事件（当前帧批次，最多 200 条）</h3>
+    <div class="log" id="eventLog"></div>
+  </details>
+  <p class="footer">时间为主机调用墙钟耗时，包含同步和采集开销；不代表 GPU 硬件执行时长。计算数值正确、实时吞吐和主讲人保真需要分别验收。</p>
+  <noscript><p class="callout">请启用 JavaScript，才能加载真实运行并回放推理流程。</p></noscript>
 </main>
-
-<script src="/trace_data.js?v=20261026-1"></script>
-<script>
-(function () {
-  "use strict";
-  var steps = [
-    { phase: 0, title: "输入帧契约", short: "160 samples", stage: "audio", tensor: "AudioFrame", shape: "[160]", detail: "麦克风或 WAV 先变成 16 kHz、单声道、160 samples 的固定帧。", callout: "这是流式边界。长度错误的音频帧会被拒绝，避免后面所有 Tensor 都错位。", code: ["AudioFrame frame = capture.read();", "validate_audio_contract(frame, 160);", "session.process(frame);"] },
-    { phase: 1, title: "Vorbis window", short: "window", stage: "frontend", tensor: "windowed audio", shape: "[320]", detail: "HushFrontend 取当前帧和需要的历史样本，应用 Hush 使用的 Vorbis 分析窗。", callout: "窗口函数属于模型输入契约；能做出可逆 ISTFT，不代表窗口就符合 Hush 训练时的定义。", code: ["auto windowed = frontend.apply_vorbis_window(frame);", "frontend_state.keep_analysis_history();", "features = frontend.process(windowed, backend, pool);"] },
-    { phase: 1, title: "STFT", short: "[1,161,2]", stage: "frontend.cpu", tensor: "complex spectrum", shape: "[1,161,2]", detail: "当前 HushFrontend::process 使用 CPU 参考实现生成复数频谱；MetalBackend::stft 原语已存在，但尚未接入这条 Hush session。", callout: "320 点 FFT 产生 161 个非冗余频点，每个频点保留实部和虚部。页面明确区分“Metal 原语存在”和“完整 Hush 路径已调用”。", code: ["HushFeatures features = frontend.process(frame);", "spectrum.shape = [1, 161, 2];", "MetalBackend::stft remains an available primitive;"] },
-    { phase: 1, title: "ERB / DF 特征", short: "32 + 64 bins", stage: "frontend.cpu", tensor: "HushFeatures", shape: "erb[32] + df[64,2]", detail: "CPU 参考前端把频谱投影到 32 个 ERB 频带，并提取至少 64 个 DF 频点的双通道特征，再更新归一化状态。", callout: "ERB 让模型看到听觉频带能量，DF 保留复数历史信息；Metal ERB 原语存在，但当前 HushFrontend 仍在 CPU 侧完成这一步。", code: ["features.erb = cpu::erb_filterbank(spectrum);", "features.df = make_df_features(spectrum, 64);", "features.normalize(erb_state, df_state);"] },
-    { phase: 2, title: "Encoder", short: "enc.onnx", stage: "onnx.encoder", tensor: "encoder outputs", shape: "e0…e3 / emb / c0 / lsnr", detail: "enc.onnx 读取 ERB 与 DF 特征，执行 Conv、激活、GRU 及连接层，产生三个 decoder 所需的命名输出。", callout: "ONNX executor 按图依赖绑定输入和 state；权重来自真实 Hush bundle，缺失输入会直接报错。", code: ["executor.prepare(model.encoder);", "bind_encoder_inputs(features, stream_state);", "encoder_outputs = executor.run(model.encoder, inputs, pool, &state);"] },
-    { phase: 2, title: "ERB decoder", short: "erb_dec.onnx", stage: "onnx.erb", tensor: "ERB mask", shape: "[1,32]", detail: "erb_dec.onnx 根据 encoder 输出生成每个 ERB 频带的抑制 / 保留 mask。", callout: "mask 不是一个手动滑块；它是模型根据当前帧和历史状态预测出来的 Tensor。", code: ["auto erb_inputs = bind_decoder_inputs(encoder_outputs);", "auto erb = executor.run(model.erb_decoder, erb_inputs, pool, &erb_state);", "mask = select_output(erb, \"m\");"] },
-    { phase: 2, title: "DF decoder", short: "df_dec.onnx", stage: "onnx.df", tensor: "complex coefs", shape: "[1,64,2,K]", detail: "df_dec.onnx 生成复数深度滤波系数，用来在频域中结合当前频谱和历史频点。", callout: "ERB mask 负责较粗的频带增益，DF 系数负责更细的复数频域滤波；两条输出一起决定听感。", code: ["auto df_inputs = bind_decoder_inputs(encoder_outputs);", "auto df = executor.run(model.df_decoder, df_inputs, pool, &df_state);", "coefs = select_output(df, \"df_coefs\");"] },
-    { phase: 3, title: "流状态回灌", short: "GRU history", stage: "stream.state", tensor: "OnnxStreamState", shape: "named state tensors", detail: "把 encoder / decoder 的 GRU、causal Pad、DF 和 synthesis history 回灌到下一帧。", callout: "MemoryPool::reset() 只能清理临时 Tensor；OnnxStreamState 必须独立持有，否则连续帧会被覆盖。", code: ["state.update_gru(encoder_outputs);", "state.update_causal_pad(features);", "state.update_df_and_synthesis_history();"] },
-    { phase: 4, title: "Mask + deep filter", short: "frequency apply", stage: "enhance.cpu", tensor: "enhanced spectrum", shape: "[1,161,2]", detail: "当前 HushStreamSession 在 CPU 侧把 ERB mask 映射到频点，并应用复数 deep filter，得到增强频谱。", callout: "这里没有“主讲人音量”参数。若模型把相近方向或音色的主讲人误判为干扰，属于模型 / 输入场景的音质问题。", code: ["auto masked = cpu::apply_erb_mask(spectrum, mask, pool);", "auto enhanced = apply_deep_filter(masked, coefs, state, pool);", "Metal fusion for this glue path is still pending;"] },
-    { phase: 4, title: "ISTFT / overlap-add", short: "160 samples", stage: "synthesis.cpu", tensor: "audio frame", shape: "[160]", detail: "当前 HushStreamSession 使用 CPU overlap-add 重建 160 samples；MetalBackend::istft 原语已具备但尚未接入完整 Hush 输出路径。", callout: "输出必须保持原始帧率和顺序；播放过快、断裂或混乱通常先检查采样率、声道和帧拼接。", code: ["auto output = synthesize_hush(enhanced, config, state);", "state.update_synthesis_history(output);", "return AudioFrame::mono_16k(output);"] },
-    { phase: 4, title: "Hush output", short: "ready", stage: "session.output", tensor: "HushFrame", shape: "160 samples", detail: "当前帧交给实时播放或 WAV writer；下一帧沿用持久状态继续处理。", callout: "最终验收要同时听 Raw、Bypass / Mixed Input 和 Hush，并检查时长、采样率、长度与峰值。", code: ["session.emit_raw_or_hush(output);", "writer.append(output, 16000, 1);", "frame_index++;"] }
-  ];
-  var stateItems = [
-    ["GRU state", "encoder hidden", 2],
-    ["Causal pad", "history tensor", 3],
-    ["DF history", "past complex bins", 3],
-    ["Synthesis", "overlap-add", 4]
-  ];
-  var cursor = 0;
-  var timer = null;
-  var traceEvents = [];
-  var traceRuns = [];
-  var loadingTrace = false;
-  var selectedRunId = new URLSearchParams(window.location.search).get("run") || "";
-  var $ = function (id) { return document.getElementById(id); };
-  function esc(value) {
-    return String(value == null ? "" : value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-  }
-  function renderSteps() {
-    $("steps").innerHTML = steps.map(function (step, index) {
-      return '<div class="step ' + (index < cursor ? "done " : "") + (index === cursor ? "active" : "") + '" data-index="' + index + '">' +
-        '<span class="step-no">' + String(index + 1).padStart(2, "0") + '</span><b>' + esc(step.title) + '</b><small>' + esc(step.short) + '</small></div>';
-    }).join("");
-    Array.prototype.forEach.call(document.querySelectorAll(".step"), function (item) {
-      item.onclick = function () { stop(); cursor = Number(item.getAttribute("data-index")); render(); };
-    });
-  }
-  function renderFlow() {
-    Array.prototype.forEach.call(document.querySelectorAll(".flow-card"), function (item) {
-      var phase = Number(item.getAttribute("data-phase"));
-      item.classList.toggle("active", phase === steps[cursor].phase);
-      item.classList.toggle("done", phase < steps[cursor].phase);
-    });
-  }
-  function renderCode(step) {
-    $("code").innerHTML = step.code.map(function (line, index) {
-      var active = index === 0 || (cursor > 0 && index === 1);
-      return '<div class="line ' + (active ? "active" : "") + '"><span>' + String(index + 1).padStart(2, "0") + '</span><span>' + esc(line) + '</span></div>';
-    }).join("");
-  }
-  function renderTensors(step) {
-    var cards = [
-      ["input", step.tensor, step.shape, "当前步骤的数据对象"],
-      ["backend", step.stage.indexOf("metal") >= 0 ? "Metal buffer / pipeline" : "CPU Tensor + optional Metal", step.stage.indexOf("metal") >= 0 ? "cached resource" : "mixed execution", "执行位置由 backend 和算子覆盖决定"],
-      ["output", cursor >= 10 ? "HushFrame" : "next Tensor", cursor >= 10 ? "[160]" : "feeds next node", "下一步继续沿依赖图流动"]
-    ];
-    $("tensors").innerHTML = cards.map(function (card, index) {
-      return '<div class="tensor"><div class="tensor-head"><b>' + esc(card[1]) + '</b><span>' + esc(card[2]) + '</span></div><p>' + esc(card[3]) + '</p><div class="bar" style="opacity:' + (index === 1 ? ".72" : "1") + '"></div></div>';
-    }).join("");
-    var cells = cursor < 2 ? ["160", "16k", "mono", "10ms"] :
-      cursor < 4 ? ["STFT", "161", "ERB32", "DF64"] :
-      cursor < 7 ? ["e0", "emb", "mask", "coefs"] :
-      cursor < 9 ? ["GRU", "Pad", "DF", "OLA"] : ["mask", "DF", "ISTFT", "160"];
-    $("matrix").innerHTML = cells.map(function (cell, index) { return '<div class="cell ' + (index === cursor % 4 ? "hot" : "") + '">' + esc(cell) + '</div>'; }).join("");
-  }
-  function renderState(step) {
-    $("stateGrid").innerHTML = stateItems.map(function (item) {
-      var status = cursor < item[2] ? "" : cursor === item[2] ? "on" : "done";
-      return '<div class="state ' + status + '"><b>' + esc(item[0]) + '</b><span>' + esc(item[1]) + '</span></div>';
-    }).join("");
-    $("backendNote").innerHTML = cursor >= 8 ?
-      "<strong>为什么这里重要：</strong>当前 Hush 输出仍由 CPU overlap-add 重建；Metal ISTFT 原语已经有，接入后还要继续做逐帧数值和播放时序验证。" :
-      "<strong>当前调度：</strong>ONNX 图中的支持算子可走 Metal，但 Hush 音频 glue 仍是 CPU 参考路径，且存在 CPU fallback、逐算子同步和 buffer copy。";
-  }
-  function renderLog(step) {
-    var rows = steps.slice(0, cursor + 1).map(function (item, index) {
-      return "<div>frame=" + String(index).padStart(2, "0") + " · " + esc(item.stage) + " · " + esc(item.title) + " · " + esc(item.shape || "") + "</div>";
-    });
-    $("log").innerHTML = rows.join("");
-    $("log").scrollTop = $("log").scrollHeight;
-  }
-  function render() {
-    var step = steps[cursor];
-    renderSteps();
-    renderFlow();
-    renderCode(step);
-    renderTensors(step);
-    renderState(step);
-    renderLog(step);
-    $("stepNo").textContent = (cursor + 1) + " / " + steps.length;
-    $("currentTitle").textContent = step.title;
-    $("currentBody").textContent = step.detail;
-    $("currentCallout").innerHTML = "<strong>读图提示：</strong>" + esc(step.callout);
-    $("stage").textContent = step.stage;
-    $("tensorMode").textContent = step.tensor;
-    $("status").textContent = "静态 Hush walkthrough · 当前步骤 " + (cursor + 1) + "/" + steps.length + " · " + step.title;
-  }
-  function stop() { if (timer) { clearInterval(timer); timer = null; } }
-  function play() {
-    stop();
-    timer = setInterval(function () {
-      if (cursor >= steps.length - 1) { stop(); return; }
-      cursor += 1;
-      render();
-    }, 1450);
-  }
-  function move(delta) {
-    stop();
-    cursor = Math.max(0, Math.min(steps.length - 1, cursor + delta));
-    render();
-  }
-  function isOldTrace(events) {
-    return !events.some(function (event) { return event.stage.indexOf("hush.") === 0; }) &&
-      events.some(function (event) { return /metal demo|matmul_kernel|add_kernel/.test(event.detail || ""); });
-  }
-  function drawTrace(events, old) {
-    if (!events.length) {
-      $("traceBox").innerHTML = '<div class="trace-empty">InfluxDB 没有返回事件；页面继续展示静态 Hush 流程。</div>';
-      return;
-    }
-    var first = Date.parse(events[0].time || events[0]._time || new Date().toISOString());
-    var last = Date.parse(events[events.length - 1].time || events[events.length - 1]._time || new Date().toISOString());
-    var span = Math.max(1, last - first);
-    var hush = events.some(function (event) { return event.stage.indexOf("hush.") === 0; });
-    var label = old ? "旧版 demo trace（MatMul / Add）" : hush ? "真实 Hush trace" : "来源未识别的真实事件";
-    var overview = events.filter(function (event) {
-      return event.event.indexOf("stage_") === 0 || event.stage === "hush.app" ||
-        event.event === "state_retained" || event.event === "session_ready";
-    });
-    var displayed = overview.concat(events.filter(function (event) { return overview.indexOf(event) < 0; })).slice(0, 160);
-    var rows = displayed.map(function (event) {
-      var time = Date.parse(event.time || event._time || new Date().toISOString());
-      var name = event.event || event._field || event.detail || "event";
-      var left = Math.max(0, Math.min(96, (time - first) / span * 96));
-      var duration = Math.max(0, Number(event.duration_ms || 0));
-      var start = Math.max(0, (time - first - duration) / span * 100);
-      var width = Math.max(.3, duration / span * 100);
-      var klass = /device=metal/.test(event.detail) || event.stage === "metal" ? "metal" : "cpu";
-      var summary = event.stage + " · " + name + " · " + duration.toFixed(3) + " ms · " + event.bytes + " B · " + event.detail;
-      return '<div class="trace-row"><div class="trace-label" title="' + esc(summary) + '">' + esc(event.stage + " / " + name) +
-        '</div><div class="trace-lane"><div class="trace-bar ' + klass + '" title="' + esc(summary) +
-        '" style="left:' + Math.min(99.5, start) + '%;width:' + Math.min(100 - start, width) + '%">' + esc(summary) + '</div></div></div>';
-    }).join("");
-    $("traceBox").innerHTML = '<div class="trace-empty">' + esc(label) + " · " + events.length +
-      " events · 优先展示完整阶段，再列节点详情，最多 160 行。悬停查看阶段 / 耗时 / shape；时长为主机调用计时（含同步），不是 GPU 硬件时间。</div>" + rows;
-  }
-  function parseCsv(text) {
-    return window.RuntimeTraceData.parseCsv(text);
-  }
-  function showRun() {
-    var run = traceRuns.find(function (item) { return item.id === $("traceRun").value; });
-    if (!run) return;
-    selectedRunId = run.id;
-    var old = run.kind === "old";
-    $("traceStatus").className = "pill " + (old ? "old" : "live");
-    $("traceStatus").textContent = old ? "OLD TRACE" : run.kind === "hush" ? "REAL HUSH TRACE" : "UNKNOWN TRACE";
-    $("traceDescription").textContent = "Run ID: " + run.id +
-      "。下面是实际运行记录，上方流程仍是源码讲解。只上传计时、shape 与字节数，不上传录音。";
-    var stages = run.events.filter(function (event) { return event.event === "stage_complete"; });
-    var kinds = Array.from(new Set(stages.map(function (event) { return event.stage; })));
-    $("traceSummary").textContent = run.events.length + " 条事件 · " + kinds.join(" → ") +
-      " · " + (run.events.some(function (event) { return event.event === "run_complete"; }) ? "测试已结束" : "采集中 / 等待结束事件") +
-      " · 节点详情限前 1024 个，阶段采样为前 3 批及周期批次。";
-    drawTrace(run.events, old);
-  }
-  function loadTrace() {
-    if (loadingTrace) return;
-    loadingTrace = true;
-    var api = $("api").value.replace(/\/$/, "");
-    var org = $("org").value;
-    var bucket = $("bucket").value;
-    var token = $("token").value;
-    $("traceStatus").textContent = "LOADING";
-    $("traceDescription").textContent = "正在读取 InfluxDB 最近 24 小时事件；页面不会把旧的两节点 trace 改名成 Hush。";
-    var runId = new URLSearchParams(window.location.search).get("run") || "";
-    var runFilter = runId ? ' |> filter(fn: (r) => r.run_id == ' + JSON.stringify(runId) + ')' : "";
-    var query = 'from(bucket: ' + JSON.stringify(bucket) + ') |> range(start: -24h) |> filter(fn: (r) => r._measurement == "runtime_trace")' +
-      runFilter + ' |> group(columns: ["_field"]) |> sort(columns: ["_time"], desc: true) |> limit(n: 20000)';
-    var controller = new AbortController();
-    var queryTimeout = setTimeout(function () { controller.abort(); }, 15000);
-    fetch(api + "/api/v2/query?org=" + encodeURIComponent(org), {
-      method: "POST",
-      signal: controller.signal,
-      headers: { "Authorization": "Token " + token, "Content-Type": "application/vnd.flux", "Accept": "application/csv" },
-      body: query
-    }).then(function (response) {
-      if (!response.ok) throw new Error("HTTP " + response.status);
-      return response.text();
-    }).then(function (text) {
-      traceEvents = parseCsv(text);
-      if (!traceEvents.length) {
-        traceRuns = [];
-        $("traceRun").innerHTML = '<option value="">暂无运行</option>';
-        $("traceSummary").textContent = "";
-        $("traceStatus").className = "pill static";
-        $("traceStatus").textContent = "STATIC";
-        $("traceDescription").textContent = "InfluxDB 没有返回事件；当前页面保留静态 Hush 流程，避免回退到旧 MatMul → Add 叙事。";
-        drawTrace([], false);
-        return;
-      }
-      traceRuns = window.RuntimeTraceData.runs(traceEvents);
-      $("traceRun").innerHTML = traceRuns.map(function (run) {
-        return '<option value="' + esc(run.id) + '">' + esc(run.id + " · " + run.kind) + '</option>';
-      }).join("");
-      if (traceRuns.some(function (run) { return run.id === selectedRunId; })) $("traceRun").value = selectedRunId;
-      showRun();
-    }).catch(function (error) {
-      $("traceStatus").className = "pill static";
-      $("traceStatus").textContent = "STATIC";
-      $("traceDescription").textContent = "InfluxDB 暂无可用事件（" + error.message + "）；当前页面保留静态 Hush 流程，避免回退到旧 MatMul → Add 叙事。";
-      drawTrace([], false);
-    }).finally(function () { clearTimeout(queryTimeout); loadingTrace = false; });
-  }
-  $("play").onclick = play;
-  $("pause").onclick = stop;
-  $("prev").onclick = function () { move(-1); };
-  $("next").onclick = function () { move(1); };
-  $("reset").onclick = function () { stop(); cursor = 0; render(); };
-  $("config").onsubmit = function (event) { event.preventDefault(); loadTrace(); };
-  $("reloadTrace").onclick = loadTrace;
-  $("traceRun").onchange = showRun;
-  setInterval(function () { if ($("autoTrace").checked && !document.hidden) loadTrace(); }, 10000);
-  $("token").value = localStorage.getItem("influx-token") || $("token").value;
-  $("token").onchange = function () { localStorage.setItem("influx-token", $("token").value); };
-  render();
-  if (selectedRunId) { $("autoTrace").checked = true; loadTrace(); }
-}());
-</script>
+<script src="/trace_data.js?v=20261026-2"></script>
+<script src="/inference.js?v=20261026-1"></script>
 </body>
 </html>
