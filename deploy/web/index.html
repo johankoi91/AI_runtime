@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Hush runtime · 真实推理流程</title>
-  <link rel="stylesheet" href="/inference.css?v=20261026-1">
+  <link rel="stylesheet" href="/inference.css?v=20261026-2">
 </head>
 <body>
 <main class="app">
@@ -115,6 +115,18 @@
     </article>
   </section>
 
+  <section class="panel mechanics">
+    <div class="section-title">
+      <h2>计算过程 / GPU 是怎么工作的</h2>
+      <span class="badge" id="mechanicsBadge">源码模型</span>
+    </div>
+    <p class="muted" id="mechanicsIntro">这里把当前阶段翻译成小白可以跟着算的公式，再说明它如何映射到 CPU 循环或 Metal 线程。公式用于理解机制；实际数值只来自真实事件中的 shape、bytes 和耗时。</p>
+    <div class="mechanics-grid">
+      <article class="mechanics-card" id="mathCard"></article>
+      <article class="mechanics-card" id="gpuCard"></article>
+    </div>
+  </section>
+
   <details class="panel secondary" id="eventDetails">
     <summary>展开辅助信息：节点详情 / 原始事件 / 观测边界</summary>
     <div class="detail-grid">
@@ -128,6 +140,6 @@
   <noscript><p class="callout">请启用 JavaScript，才能加载真实运行并回放推理流程。</p></noscript>
 </main>
 <script src="/trace_data.js?v=20261026-2"></script>
-<script src="/inference.js?v=20261026-1"></script>
+<script src="/inference.js?v=20261026-2"></script>
 </body>
 </html>

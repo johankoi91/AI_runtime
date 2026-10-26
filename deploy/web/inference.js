@@ -248,6 +248,121 @@
     badge($("eventBadge"), real ? observation ? observation.event : "未采集" : "源码讲解", real ? "live" : "lesson");
   }
 
+  var calculations = {
+    input: {
+      title: "先把连续声音切成小块",
+      formula: "16000 samples / second\n160 samples / frame = 0.010 second = 10 ms",
+      steps: ["读取原始采样，转成 16 kHz、单声道。", "每次取 160 个 float，组成一个 AudioFrame。", "帧尾不足时补零或等待下一批；模型只接受固定长度。"],
+      note: "160 是时间轴上的采样数量，不是 160 个字，也不是 GPU 线程数。"
+    },
+    frontend: {
+      title: "STFT：每个频点有多少能量",
+      formula: "xw[n] = x[n] × VorbisWindow[n]\nX[k] = Σ(n=0..319) xw[n] × e^(-i·2πkn/320)\n频点 k = 0..160，所以得到 161 个复数",
+      steps: ["上一帧 160 点 + 当前帧 160 点，组成 320 点分析窗。", "每个频点都把 320 个样本乘上不同的正弦 / 余弦并求和。", "实部和虚部一起表示该频率的强度与相位。", "再按 ERB 频带聚合能量，并提取前 64 个 DF 复数频点。"],
+      note: "这里的实部 / 虚部不是左右声道；它们是同一个频率的两个数学分量。"
+    },
+    encoder: {
+      title: "Encoder：重复的张量乘加",
+      formula: "Conv / Linear 的核心：\ny[out] = bias[out] + Σ(input[i] × weight[out,i])\nGRU 的核心：h[t] = GRU(x[t], h[t-1])",
+      steps: ["每个 ONNX 节点读取上游 Tensor，按依赖顺序运行。", "卷积 / 线性层对输入做很多次乘法和加法。", "激活函数改变结果的非线性；GRU 还读取上一帧的 hidden state。", "节点输出写回执行器的 Tensor 字典，命名输出交给两张 decoder。"],
+      note: "同一个 Encoder 里既可能有 Metal 节点，也可能有 CPU fallback；看节点事件中的 device 才能知道实际位置。"
+    },
+    erb: {
+      title: "ERB decoder：从特征预测 32 个增益",
+      formula: "m = erb_decoder(e0, e1, e2, emb, c0, lsnr)\n输出：m[band]，每个 band 对应一个听觉频带",
+      steps: ["读取 Encoder 的命名输出。", "网络内部仍是 Conv / Linear / 激活等张量运算。", "最终得到当前帧或批次的 32 个频带增益。", "这个 m 之后会投影回 161 个频点。"],
+      note: "页面显示的是网络输出契约；不要把 m 当成一个可手动调节的 UI 参数。"
+    },
+    df: {
+      title: "DF decoder：预测复数系数",
+      formula: "coefs[k,j] = df_decoder(encoder_outputs)\nj = 0..4：5 个历史 tap\n每个 tap = real + i·imag",
+      steps: ["读取同一份 Encoder 输出。", "网络为低频 64 个频点预测 5 阶复数系数。", "每个复数系数后面会参与一次复数乘法。", "系数本身不是音频；它描述怎样组合历史频谱。"],
+      note: "5 阶意味着当前频谱加上最多 4 帧历史；第一帧历史不足时使用零。"
+    },
+    mask: {
+      title: "把 32 个频带增益投影回 161 个频点",
+      formula: "gain[k] = Σ(b=0..31) projection[k,b] × m[b]\nS_mask[k] = S[k] × gain[k]",
+      steps: ["每个频点 k 查找它与 32 个 ERB band 的投影关系。", "把 32 个 band 的增益加权求和，得到该频点的 gain。", "实部、虚部同时乘上 gain，得到 masked spectrum。"],
+      note: "这是 CPU 频谱循环；它没有启动 GPU thread。"
+    },
+    deep_filter: {
+      title: "低频 Deep Filter：复数历史加权",
+      formula: "S_df[k] = Σ(j=0..4) C[k,j] × S_raw[t-j,k]\n(a+ib)(c+id) = (ac-bd) + i(ad+bc)",
+      steps: ["取当前原始频谱和 DF history 中的历史频点。", "每个 tap 做一次复数乘法。", "把 5 个 tap 的结果相加，得到低频增强频谱。", "高于 DF bins 的频点沿用 ERB mask 结果。"],
+      note: "关键点：低频 DF 读取原始频谱；高频才从 mask 结果补齐。"
+    },
+    synthesis: {
+      title: "ISTFT：从频谱回到波形",
+      formula: "x_frame[n] = Σ(k=0..319) Re(S[k] × e^(i·2πkn/320)) × synthesisWindow[n]\noutput = currentFrame + overlapHistory",
+      steps: ["把正频率和镜像负频率组合成实数波形。", "对每个时间采样点，把所有频点贡献相加。", "乘合成窗，并和上一窗口的重叠部分相加。", "只输出当前 hop 的 160 点，剩余部分留给下一帧。"],
+      note: "当前完整 Hush session 使用 CPU 参考 overlap-add；Metal ISTFT shader 是可用原语，但没有被这条 session 调用。"
+    },
+    state: {
+      title: "状态：让下一帧记得上一帧",
+      formula: "state_next = {\n  GRU hidden,\n  causal Pad history,\n  DF spectrum history,\n  synthesis overlap history\n}",
+      steps: ["Encoder / decoder 的 GRU 保存最后 hidden。", "因果 Pad 保存卷积下一帧需要的历史。", "DF 保存低频复数频谱，合成器保存 overlap-add 尾部。", "这些状态不能指向会被 pool.reset() 覆盖的临时内存。"],
+      note: "流式模型的“连续感”来自状态；每一帧从零开始会让结果和实时处理不一样。"
+    },
+    output: {
+      title: "输出：把帧重新接成声音",
+      formula: "T frames × 160 samples/frame = T×160 samples\nsample_rate = 16000 · channels = 1",
+      steps: ["每个输出 AudioFrame 都保持 160 个采样点。", "批次输出按原顺序追加到 WAV 或播放缓冲。", "播放速度由采样率决定，不由推理完成速度决定。"],
+      note: "推理很快或很慢都不能改变 WAV 的采样率；时长错乱优先检查帧数量和采样率。"
+    }
+  };
+
+  function renderMechanics(phase) {
+    var spec = calculations[phase] || calculations.input;
+    var real = state.mode === "real";
+    var events = currentEvents();
+    var stats = data.stageStats(events, phase);
+    var nodeEvents = stats.nodes;
+    var metalEvents = events.filter(function (event) { return event.stage === "metal"; });
+    var deviceValues = nodeEvents.map(function (event) { return data.attributes(event.detail).device; }).filter(Boolean);
+    var metalPhase = phase === "encoder" || phase === "erb" || phase === "df";
+    var hasMetal = deviceValues.indexOf("metal") >= 0 || (metalPhase && metalEvents.length > 0);
+    var hasCpu = deviceValues.indexOf("cpu") >= 0 || (real && (phase === "frontend" || phase === "mask" ||
+      phase === "deep_filter" || phase === "synthesis" || phase === "state"));
+    var observed = real ? "实测记录：节点 " + nodeEvents.length + " 个 · Metal 底层事件 " +
+      metalEvents.length + " 个 · 设备 " + deviceLabel(Array.from(new Set(deviceValues))) : "这是源码级计算模型";
+    var dispatch = metalEvents.find(function (event) { return event.event === "dispatch_configured"; });
+    var dispatchText = dispatch ? dispatch.detail : "本批没有单独上报 dispatch grid";
+    $("mathCard").innerHTML = "<h3>① 公式：数据到底怎么算</h3>" +
+      "<div class=\"formula\">" + escape(spec.formula) + "</div>" +
+      spec.steps.map(function (step, index) {
+        return '<div class="mechanics-step"><i>' + (index + 1) + '</i><div>' + escape(step) + '</div></div>';
+      }).join("") +
+      '<p class="mechanics-note">' + escape(spec.note) + "</p>";
+    var lane = hasMetal ? [
+      ["1", "Tensor", "on"],
+      ["2", "MTLBuffer", "on"],
+      ["3", "Command", "on"],
+      ["4", "Threads", "on"],
+      ["5", "Copy back", "on"]
+    ] : [
+      ["1", "Tensor", "cpu"],
+      ["2", "循环", "cpu"],
+      ["3", "写 output", "cpu"],
+      ["4", "更新 state", "cpu"],
+      ["5", "下一阶段", "cpu"]
+    ];
+    var gpuExplanation = hasMetal
+      ? "实际含 Metal 节点：每个输出位置通常由一个概念线程负责；线程从输入 / 权重 buffer 读取，计算后写输出 buffer。MetalBackend 会创建 command buffer、配置 encoder、dispatch grid，完成后同步并回读 Tensor。"
+      : "当前阶段实际走 CPU：没有 Metal thread。可以把它想成一个或多个 CPU 循环逐个读取 Tensor 元素，计算后写入 MemoryPool 的 output，再交给下一个阶段。";
+    var actual = real
+      ? "实测：" + escape(observed) + "。本批最新 dispatch 记录：" + escape(dispatchText)
+      : "源码模型：页面没有真实事件，所以不展示伪造的 GPU grid / 耗时。";
+    $("gpuCard").innerHTML = "<h3>② 执行：CPU / GPU 怎么跑</h3>" +
+      '<div class="gpu-lane">' + lane.map(function (item) {
+        return '<div class="gpu-box ' + item[2] + '"><b>' + item[0] + '</b><br>' + item[1] + '</div>';
+      }).join("") + "</div>" +
+      '<div class="mechanics-step"><i>↳</i><div>' + escape(gpuExplanation) + "</div></div>" +
+      '<div class="mechanics-step"><i>∥</i><div><b>线程如何分工：</b>卷积 / MatMul 常见映射是“一个输出元素 = 一个线程”；线程内部仍要循环累加输入和权重。ERB filterbank 则常见为“一个 frame × band = 一个线程”。</div></div>' +
+      '<div class="mechanics-step"><i>↔</i><div><b>同步在哪里：</b>本 runtime 当前 Metal 算子会等待完成并把结果复制回 Tensor，所以跨算子仍有同步点；这也是小算子吞吐受影响的原因。</div></div>' +
+      '<div class="observed-line ' + (real ? "" : "warn") + '">' + actual + "</div>";
+    badge($("mechanicsBadge"), real ? "源码模型 + 实测证据" : "源码模型", real ? "live" : "lesson");
+  }
+
   function renderTimings() {
     var real = state.mode === "real";
     var stats = measuredPhases.map(function (phase) { return { phase: phase, value: data.stageStats(currentEvents(), phase) }; });
@@ -298,6 +413,7 @@
     renderOverview();
     renderGraph(phase);
     renderInspector(phase);
+    renderMechanics(phase);
     renderTimings();
     renderDetails(phase);
     $("position").textContent = count ? (state.cursor + 1) + " / " + count : "没有可回放事件";
