@@ -67,7 +67,7 @@ HUSH_MODEL_BUNDLE="$PWD/build-app/models/hush-real-model.tar.gz" \
 
 App 验收还需要检查 `Play Raw Mic`、`Play Bypass` 和 `Play Hush` 的播放时长相同。开始新的麦克风会话时重置流状态，避免沿用上一次采集的历史。
 
-App 内的 `Generate Background Voice Demo` 现在使用两段独立中文语音。默认混音为主讲人高于背景人声 `18 dB`，还可以选择 `24/12/3/0 dB`；生成后直接播放 `Play Enhanced Output`。主讲参考和混音输入仍会写入 `/tmp`，用于诊断工具，不再放在 UI 上重复播放。
+App 内的 `Generate Background Voice Demo` 现在使用两段独立中文语音。默认混音为主讲人高于背景人声 `18 dB`，还可以选择 `24/12/3/0 dB`；生成后依次播放 `Play Mixed Input` 和 `Play Enhanced Output`。主讲参考仍写入 `/tmp`，用于诊断工具。
 
 模型的公开训练范围是背景人声低于主讲人约 `12–24 dB`。同音量或背景更响属于挑战场景，当前 8 MB 模型不保证完全分离；其分离 head 只用于训练正则，未导出为独立的背景源分离输出。Hush 的结果与 ONNX Runtime 已对齐，因此主观效果受模型能力和输入声学条件限制。
 

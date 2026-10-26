@@ -198,7 +198,10 @@ struct Metrics {
   NSButton* play_output = [NSButton buttonWithTitle:@"Play Enhanced Output" target:self action:@selector(playEnhancedOutput:)];
   play_output.frame = NSMakeRect(265, 30, 150, 30);
   [content addSubview:play_output];
-  demo_mix_popup_ = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(430, 30, 145, 30) pullsDown:NO];
+  NSButton* play_input = [NSButton buttonWithTitle:@"Play Mixed Input" target:self action:@selector(playMixedInput:)];
+  play_input.frame = NSMakeRect(430, 30, 135, 30);
+  [content addSubview:play_input];
+  demo_mix_popup_ = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(580, 30, 145, 30) pullsDown:NO];
   [demo_mix_popup_ addItemsWithTitles:@[@"Background −18 dB", @"Background −12 dB", @"Background −24 dB", @"Background −3 dB", @"Equal voices 0 dB"]];
   [content addSubview:demo_mix_popup_];
   record_button_ = [NSButton buttonWithTitle:@"Record A/B Test" target:self action:@selector(recordComparison:)];
@@ -392,6 +395,7 @@ struct Metrics {
 }
 
 - (void)playEnhancedOutput:(id)sender { (void)sender; [self playDemoFile:@"/tmp/hush-background-output.wav"]; }
+- (void)playMixedInput:(id)sender { (void)sender; [self playDemoFile:@"/tmp/hush-background-input.wav"]; }
 - (void)playRawMic:(id)sender { (void)sender; [self playDemoFile:@"/tmp/hush-mic-raw.wav"]; }
 - (void)playHush:(id)sender { (void)sender; [self playDemoFile:@"/tmp/hush-mic-enhanced.wav"]; }
 - (void)playDemoFile:(NSString*)path {
