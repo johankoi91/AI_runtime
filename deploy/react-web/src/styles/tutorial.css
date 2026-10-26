@@ -64,6 +64,26 @@ summary { cursor: pointer; }
 .parameter label { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--muted); }
 .parameter input[type="range"] { width: 100%; accent-color: var(--green); cursor: pointer; }
 .parameter select { width: 100%; font-size: 13px; }
+.formula-guide { margin: 8px 0 4px; padding: 20px; border: 1px solid var(--line); border-radius: 10px; background: linear-gradient(135deg, #10232b, #0d1922 72%); }
+.formula-guide-heading { display: flex; align-items: start; justify-content: space-between; gap: 18px; }
+.formula-guide-heading h3 { max-width: 720px; line-height: 1.55; color: var(--text); }
+.formula-pulse { display: inline-flex; align-items: center; gap: 7px; color: var(--green); border: 1px solid #386f61; border-radius: 999px; padding: 5px 10px; font: 11px ui-monospace, monospace; white-space: nowrap; }
+.formula-pulse i { width: 7px; height: 7px; display: block; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 0 #9be5bd88; animation: formula-pulse 1.6s infinite; }
+@keyframes formula-pulse { 70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+.formula-reading { color: #d9e8e6; font-size: 13px; line-height: 1.8; margin: 3px 0 14px; }
+.formula-reading b { color: var(--green); }
+.formula-parts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.formula-parts article { position: relative; min-height: 112px; padding: 12px 11px 10px; border: 1px solid var(--line); border-radius: 7px; background: #0c1821; transition: border-color .2s, transform .2s, background .2s; }
+.formula-parts article.active { border-color: var(--green); background: #17342e; transform: translateY(-3px); box-shadow: 0 8px 22px #07110d66; }
+.formula-part-index { display: block; color: var(--muted); font: 10px ui-monospace, monospace; margin-bottom: 5px; }
+.formula-parts code { display: block; color: var(--amber); font: 13px/1.5 ui-monospace, monospace; overflow-wrap: anywhere; }
+.formula-parts p { color: var(--muted); font-size: 12px; line-height: 1.65; margin-top: 5px; }
+.formula-example, .animation-note { display: grid; grid-template-columns: 105px 1fr; gap: 12px; align-items: start; margin-top: 12px; padding: 10px 12px; border-radius: 6px; font-size: 12px; line-height: 1.7; }
+.formula-example { background: #272419; border-left: 2px solid var(--amber); }
+.animation-note { background: #102b2d; border-left: 2px solid var(--blue); }
+.formula-example span, .animation-note span { color: var(--amber); font: 11px ui-monospace, monospace; }
+.animation-note span { color: var(--blue); }
+.formula-example p, .animation-note p { color: #d5e2e0; }
 .reading-grid { display: grid; grid-template-columns: 1.1fr 1fr; gap: 40px; padding: 32px 0; }
 .section-label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--green); margin-bottom: 10px; }
 .analogy { font-size: 21px; line-height: 1.65; margin-bottom: 17px; color: var(--text); }
@@ -118,6 +138,13 @@ footer p + p { margin-top: 8px; }
   .parameter-controls { padding: 12px; gap: 12px; }
   .parameter { min-width: 0; flex-basis: 100%; }
   .speed { margin-left: 0; }
+  .formula-guide { padding: 15px; }
+  .formula-guide-heading { gap: 10px; }
+  .formula-guide-heading h3 { font-size: 15px; }
+  .formula-pulse { padding-inline: 7px; }
+  .formula-parts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .formula-parts article { min-height: 125px; }
+  .formula-example, .animation-note { grid-template-columns: 1fr; gap: 2px; }
   .reading-grid { padding-block: 24px; }
   .analogy { font-size: 19px; }
   .equation { font-size: 12px; }

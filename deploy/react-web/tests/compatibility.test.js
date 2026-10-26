@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import vm from "node:vm";
 
 import lessons from "../src/lib/tutorial-lessons.js";
+import guidance from "../src/lib/lesson-guidance.js";
 import math from "../src/lib/tutorial-math.js";
 import { getFrameCount, renderTutorialFrame } from "../src/tutorial/canvas-engine.js";
 
@@ -30,16 +31,31 @@ function recorder() {
   return { calls, context };
 }
 
-test("both independent page styles remain byte-identical to the original", () => {
-  for (const page of ["inference", "tutorial"]) {
-    assert.equal(readFileSync(new URL(`../src/styles/${page}.css`, import.meta.url), "utf8"), readLegacy(`${page}.css`));
+test("Trace style stays byte-identical and tutorial style keeps the original visual system", () => {
+  assert.equal(readFileSync(new URL("../src/styles/inference.css", import.meta.url), "utf8"), readLegacy("inference.css"));
+  const tutorialCss = readFileSync(new URL("../src/styles/tutorial.css", import.meta.url), "utf8");
+  for (const selector of [".course {", ".stage {", "#animation {", ".reading-grid {", ".quiz {", "@media (max-width: 600px)"]) {
+    assert.ok(tutorialCss.includes(selector), selector);
   }
+  assert.ok(tutorialCss.includes(".formula-guide {"));
 });
 
 test("all 18 lesson definitions and formulas preserve the original data", () => {
   const sandbox = { window: {} };
   vm.runInNewContext(readLegacy("tutorial-lessons.js"), sandbox);
   assert.equal(JSON.stringify(lessons), JSON.stringify(sandbox.window.HushTutorialLessons));
+});
+
+test("every lesson has a complete formula guide for the detailed React tutorial", () => {
+  assert.equal(Object.keys(guidance).length, lessons.length);
+  for (const lesson of lessons) {
+    const guide = guidance[lesson.id];
+    assert.ok(guide.hook && guide.read && guide.example && guide.animation, lesson.id);
+    assert.equal(guide.parts.length, 4, lesson.id);
+    guide.parts.forEach(([symbol, explanation]) => {
+      assert.ok(symbol && explanation, lesson.id);
+    });
+  }
 });
 
 test("all lesson Canvas frames preserve drawing commands and calculation text", () => {
