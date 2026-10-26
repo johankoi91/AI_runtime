@@ -84,6 +84,18 @@ summary { cursor: pointer; }
 .formula-example span, .animation-note span { color: var(--amber); font: 11px ui-monospace, monospace; }
 .animation-note span { color: var(--blue); }
 .formula-example p, .animation-note p { color: #d5e2e0; }
+.sampling-mini { margin-top: 14px; padding: 12px; border: 1px solid #294454; border-radius: 8px; background: #0a1720; }
+.sampling-mini-title, .sampling-mini-caption { display: flex; justify-content: space-between; gap: 10px; color: var(--muted); font: 11px ui-monospace, monospace; }
+.sampling-mini-title span:first-child { color: var(--green); }
+.sampling-mini svg { display: block; width: 100%; height: auto; margin-top: 5px; overflow: visible; }
+.sampling-mini svg text { fill: var(--muted); font: 10px ui-monospace, monospace; }
+.sample-wave { fill: none; stroke: var(--blue); stroke-width: 2; }
+.sample-dot { fill: var(--amber); opacity: .45; transition: r .2s, opacity .2s; }
+.sample-dot.active { opacity: 1; filter: drop-shadow(0 0 4px #f2c581); }
+.sample-axis { stroke: var(--line); stroke-width: 1; }
+.nyquist-line { stroke: var(--red); stroke-width: 2; stroke-dasharray: 4 3; }
+.sampling-mini-caption { margin-top: 2px; }
+.sampling-mini-caption .danger { color: var(--red); }
 .reading-grid { display: grid; grid-template-columns: 1.1fr 1fr; gap: 40px; padding: 32px 0; }
 .section-label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--green); margin-bottom: 10px; }
 .analogy { font-size: 21px; line-height: 1.65; margin-bottom: 17px; color: var(--text); }
@@ -145,6 +157,7 @@ footer p + p { margin-top: 8px; }
   .formula-parts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .formula-parts article { min-height: 125px; }
   .formula-example, .animation-note { grid-template-columns: 1fr; gap: 2px; }
+  .sampling-mini-title, .sampling-mini-caption { font-size: 10px; }
   .reading-grid { padding-block: 24px; }
   .analogy { font-size: 19px; }
   .equation { font-size: 12px; }
