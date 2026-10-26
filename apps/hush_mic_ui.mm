@@ -195,16 +195,10 @@ struct Metrics {
   NSButton* generate_demo = [NSButton buttonWithTitle:@"Generate Background Voice Demo" target:self action:@selector(generateInterferenceDemo:)];
   generate_demo.frame = NSMakeRect(32, 30, 220, 30);
   [content addSubview:generate_demo];
-  NSButton* play_input = [NSButton buttonWithTitle:@"Play Mixed Input" target:self action:@selector(playMixedInput:)];
-  play_input.frame = NSMakeRect(265, 30, 135, 30);
-  [content addSubview:play_input];
   NSButton* play_output = [NSButton buttonWithTitle:@"Play Enhanced Output" target:self action:@selector(playEnhancedOutput:)];
-  play_output.frame = NSMakeRect(412, 30, 150, 30);
+  play_output.frame = NSMakeRect(265, 30, 150, 30);
   [content addSubview:play_output];
-  NSButton* play_target = [NSButton buttonWithTitle:@"Play Target Reference" target:self action:@selector(playTargetReference:)];
-  play_target.frame = NSMakeRect(570, 30, 160, 30);
-  [content addSubview:play_target];
-  demo_mix_popup_ = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(735, 30, 145, 30) pullsDown:NO];
+  demo_mix_popup_ = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(430, 30, 145, 30) pullsDown:NO];
   [demo_mix_popup_ addItemsWithTitles:@[@"Background −18 dB", @"Background −12 dB", @"Background −24 dB", @"Background −3 dB", @"Equal voices 0 dB"]];
   [content addSubview:demo_mix_popup_];
   record_button_ = [NSButton buttonWithTitle:@"Record A/B Test" target:self action:@selector(recordComparison:)];
@@ -213,13 +207,10 @@ struct Metrics {
   NSButton* play_raw = [NSButton buttonWithTitle:@"Play Raw Mic" target:self action:@selector(playRawMic:)];
   play_raw.frame = NSMakeRect(225, 0, 115, 28);
   [content addSubview:play_raw];
-  NSButton* play_bypass = [NSButton buttonWithTitle:@"Play Bypass" target:self action:@selector(playBypass:)];
-  play_bypass.frame = NSMakeRect(350, 0, 105, 28);
-  [content addSubview:play_bypass];
   NSButton* play_hush = [NSButton buttonWithTitle:@"Play Hush" target:self action:@selector(playHush:)];
-  play_hush.frame = NSMakeRect(465, 0, 100, 28);
+  play_hush.frame = NSMakeRect(350, 0, 100, 28);
   [content addSubview:play_hush];
-  demo_label_ = [NSTextField labelWithString:@"Speech demo: two synthesized Chinese voices · choose mix level, then Generate · compare with Target Reference"];
+  demo_label_ = [NSTextField labelWithString:@"Speech demo: choose mix level, Generate, then play Enhanced Output"];
   demo_label_.textColor = [NSColor tertiaryLabelColor];
   demo_label_.frame = NSMakeRect(32, 58, 848, 18);
   [content addSubview:demo_label_];
@@ -400,11 +391,8 @@ struct Metrics {
   });
 }
 
-- (void)playTargetReference:(id)sender { (void)sender; [self playDemoFile:@"/tmp/hush-background-target.wav"]; }
-- (void)playMixedInput:(id)sender { (void)sender; [self playDemoFile:@"/tmp/hush-background-input.wav"]; }
 - (void)playEnhancedOutput:(id)sender { (void)sender; [self playDemoFile:@"/tmp/hush-background-output.wav"]; }
 - (void)playRawMic:(id)sender { (void)sender; [self playDemoFile:@"/tmp/hush-mic-raw.wav"]; }
-- (void)playBypass:(id)sender { (void)sender; [self playDemoFile:@"/tmp/hush-mic-bypass.wav"]; }
 - (void)playHush:(id)sender { (void)sender; [self playDemoFile:@"/tmp/hush-mic-enhanced.wav"]; }
 - (void)playDemoFile:(NSString*)path {
   if (![[NSFileManager defaultManager] fileExistsAtPath:path]) { demo_label_.stringValue = @"Demo: generate the files first"; return; }
