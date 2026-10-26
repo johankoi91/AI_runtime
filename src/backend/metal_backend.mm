@@ -634,9 +634,9 @@ Tensor MetalBackend::add(const Tensor& lhs, const Tensor& rhs, MemoryPool& pool)
   [encoder endEncoding];
   if (impl_->trace != nullptr) {
     impl_->trace->emit("metal", "encoder_configured", "add buffers=lhs,rhs,out,count");
-    impl_->trace->emit("metal", "dispatch_configured", "add grid=4 threads_per_group=" +
+    impl_->trace->emit("metal", "dispatch_configured", "add grid=" + std::to_string(count) + " threads_per_group=" +
         std::to_string(threads));
-    impl_->trace->emit("metal", "kernel_submitted", "add_kernel grid=4");
+    impl_->trace->emit("metal", "kernel_submitted", "add_kernel grid=" + std::to_string(count));
   }
   const auto start = std::chrono::steady_clock::now();
   [command_buffer commit];

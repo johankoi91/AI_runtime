@@ -28,6 +28,7 @@ class HushStreamSession {
       const HushModel& model,
       const Backend& backend,
       std::vector<StateBinding> encoder_state = {});
+  ~HushStreamSession();
 
   std::unordered_map<std::string, Tensor> process_encoder(
       const std::unordered_map<std::string, Tensor>& inputs,
@@ -68,13 +69,16 @@ class HushStreamSession {
       const Backend& backend,
       MemoryPool& pool);
   void reset();
+  void set_trace_sink(TraceSink* sink);
 
   std::size_t frame_index() const { return frame_index_; }
   bool has_state(const std::string& input_name) const;
   void validate_frame(const AudioFrame& frame) const;
 
  private:
+  HushFeatures process_features(const AudioFrame& frame);
   const HushModel& model_;
+  const Backend* backend_;
   OnnxExecutor executor_;
   std::vector<StateBinding> encoder_state_bindings_;
   std::unordered_map<std::string, Tensor> state_;
@@ -85,6 +89,10 @@ class HushStreamSession {
   OnnxStreamState erb_stream_state_;
   OnnxStreamState df_stream_state_;
   std::size_t frame_index_ = 0;
+  TraceSink* trace_ = nullptr;
+  std::size_t audio_frames_ = 0;
+  bool trace_batch_enabled_ = true;
+  TraceSink* active_trace() const { return trace_batch_enabled_ ? trace_ : nullptr; }
 };
 
 }  // namespace runtime

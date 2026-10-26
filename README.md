@@ -235,6 +235,12 @@ INFLUXDB_TOKEN=mini-runtime-local-token \
 
 页面地址：`http://81.71.150.26/`。页面查询最近 24 小时事件，并按最近一次 `run_id` 的真实时间戳回放。
 
+Hush 的 `hush_mic_ui.app` 也会为麦克风实时处理、录音 A/B 处理和背景人声演示创建独立 Run ID。点击 App 中的 `Open Trace`，或在页面 URL 后追加 `?run=<Run ID>`，即可查看该次测试的真实阶段事件。事件只包含阶段、节点、shape、字节数和耗时，不上传录音内容。
+
+App 里点击 `Generate Background Voice Demo` 或开始/停止 `Record A/B Test` 后，等待状态栏显示 `synced`，再点击 `Open Trace`。如果只想本地运行并关闭上传，可设置 `HUSH_TRACE_ENABLED=0` 后启动 App。
+
+事件采样范围、后台缓存与验收步骤见 [Hush Influx trace](docs/hush-influx-trace.md)。
+
 Metal trace 现在还会记录设备和 pipeline 就绪、Node ready、输入读取、MTLBuffer 创建、command buffer、encoder、dispatch grid、kernel 提交/完成，以及结果回传开始/完成等细粒度事件。事件先在本地批量缓存，运行结束后一次写入 InfluxDB，避免网络请求干扰 GPU 执行时间。
 
 ### 打开动画讲解界面

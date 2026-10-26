@@ -9,6 +9,10 @@
   <key>CFBundleShortVersionString</key><string>1.0</string>
   <key>CFBundleVersion</key><string>1</string>
   <key>NSMicrophoneUsageDescription</key><string>Hush uses the microphone to demonstrate real-time speech enhancement.</string>
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsArbitraryLoads</key><true/>
+  </dict>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
 </dict>
 </plist>

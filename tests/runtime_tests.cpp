@@ -90,6 +90,21 @@ struct TestContext {
   }
 };
 
+struct RecordedTrace : runtime::TraceSink {
+  struct Event {
+    std::string stage;
+    std::string event;
+    std::string detail;
+    std::size_t bytes;
+    double duration;
+  };
+  std::vector<Event> events;
+  void emit(std::string_view stage, std::string_view event, std::string_view detail,
+            std::size_t bytes = 0, double duration_ms = 0) override {
+    events.push_back({std::string(stage), std::string(event), std::string(detail), bytes, duration_ms});
+  }
+};
+
 void test_tensor_basics(TestContext& ctx) {
   // 这个测试主要验证 Tensor 最基本的元信息是否正确。
   runtime::Tensor tensor = runtime::Tensor::zeros({2, 3});
@@ -834,11 +849,41 @@ void test_hush_stream_session(TestContext& ctx) {
   full_model.encoder.outputs = {"hidden"};
   runtime::HushStreamSession full_session(full_model, backend);
   runtime::MemoryPool full_pool;
+  RecordedTrace trace;
+  full_session.set_trace_sink(&trace);
   const runtime::AudioFrame enhanced = full_session.process_audio(
       runtime::AudioFrame::mono_16k(std::vector<float>(160, 0.1f)),
       "erb", "df", "erb_out", backend, full_pool);
   ctx.expect_true(enhanced.sample_count() == 160, "full Hush audio pipeline should preserve frame length");
   ctx.expect_true(std::isfinite(enhanced.samples()[80]), "full Hush audio output should be finite");
+  for (const std::string stage : {"hush.frontend", "hush.encoder", "hush.erb_decoder",
+                                 "hush.df_decoder", "hush.mask", "hush.synthesis", "hush.batch"}) {
+    ctx.expect_true(std::any_of(trace.events.begin(), trace.events.end(), [&](const auto& event) {
+      return event.stage == stage && event.event == "stage_complete" && event.duration >= 0;
+    }), "Hush trace should complete stage " + stage);
+  }
+  ctx.expect_true(std::any_of(trace.events.begin(), trace.events.end(), [](const auto& event) {
+    return event.event == "node_complete" && event.detail.find("device=cpu") != std::string::npos;
+  }), "Hush node trace should report the actual CPU dispatch");
+  full_pool.reset();
+  bool trace_error = false;
+  try {
+    full_session.process_audio(runtime::AudioFrame::mono_16k(std::vector<float>(160, 0.1f)),
+                               "erb", "df", "missing", backend, full_pool);
+  } catch (const std::runtime_error&) { trace_error = true; }
+  ctx.expect_true(trace_error && trace.events.back().event == "stage_error",
+                  "failed Hush batch should emit an error instead of completion");
+  full_session.set_trace_sink(nullptr);
+  full_session.reset();
+  full_pool.reset();
+  const std::size_t traced_events = trace.events.size();
+  const auto untraced = full_session.process_audio(
+      runtime::AudioFrame::mono_16k(std::vector<float>(160, 0.1f)),
+      "erb", "df", "erb_out", backend, full_pool);
+  ctx.expect_true(trace.events.size() == traced_events, "detached Hush trace must stop emitting");
+  for (std::size_t index = 0; index < enhanced.sample_count(); ++index)
+    ctx.expect_close(untraced.samples()[index], enhanced.samples()[index], 1e-6f,
+                     "tracing must preserve audio output");
 
   pool.reset();
   const auto second = session.process_encoder(

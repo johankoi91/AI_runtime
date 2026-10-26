@@ -15,6 +15,7 @@
 #include "runtime/hush_model.h"
 #include "runtime/hush_session.h"
 #include "runtime/metal_backend.h"
+#include "runtime/influxdb_sink.h"
 #include "hush_speech_demo.h"
 
 namespace {
@@ -23,6 +24,21 @@ std::string error_message(NSError* error, const char* fallback) {
   NSString* description = error.localizedDescription;
   const char* utf8 = description.UTF8String;
   return utf8 != nullptr && utf8[0] != '\0' ? std::string(utf8) : std::string(fallback);
+}
+
+std::shared_ptr<runtime::InfluxDbSink> make_hush_trace(const char* kind) {
+  runtime::InfluxDbConfig config{
+      .url = "http://81.71.150.26/influx",
+      .org = "mini-runtime",
+      .bucket = "mini-runtime",
+      .token = "mini-runtime-local-token",
+      .run_id = "hush-ui-" + std::string(kind) + "-" + NSUUID.UUID.UUIDString.UTF8String};
+  if (const char* enabled = std::getenv("HUSH_TRACE_ENABLED"); enabled && std::string(enabled) == "0")
+    config.enabled = false;
+  auto sink = std::make_shared<runtime::InfluxDbSink>(std::move(config));
+  sink->emit("hush.app", "run_start", "source=" + std::string(kind) +
+             " node_detail=first_1024 stages=first_3_then_periodic audio_payload=none");
+  return sink;
 }
 
 struct Metrics {
@@ -79,6 +95,11 @@ struct Metrics {
   NSTextField* status_label_;
   NSTextField* metrics_label_;
   NSTextField* demo_label_;
+  NSTextField* trace_label_;
+  std::shared_ptr<runtime::InfluxDbSink> live_trace_;
+  std::shared_ptr<runtime::InfluxDbSink> latest_trace_;
+  std::mutex pipeline_mutex_;
+  std::atomic_bool processing_;
   NSButton* record_button_;
   AVAudioPlayer* player_;
   AVAudioConverter* converter_;
@@ -107,6 +128,7 @@ struct Metrics {
 - (void)applicationDidFinishLaunching:(NSNotification*)notification {
   (void)notification;
   recording_.store(false);
+  processing_.store(false);
   [self buildWindow];
   const char* env_path = std::getenv("HUSH_MODEL_BUNDLE");
   if (env_path != nullptr) {
@@ -137,6 +159,11 @@ struct Metrics {
   subtitle.textColor = [NSColor secondaryLabelColor];
   subtitle.frame = NSMakeRect(34, 520, 500, 22);
   [content addSubview:subtitle];
+  trace_label_ = [NSTextField labelWithString:@"Trace: tests upload timing and shapes to 81.71.150.26"];
+  trace_label_.textColor = [NSColor secondaryLabelColor];
+  trace_label_.font = [NSFont systemFontOfSize:11];
+  trace_label_.frame = NSMakeRect(34, 500, 845, 18);
+  [content addSubview:trace_label_];
 
   model_label_ = [NSTextField labelWithString:@"Model: not loaded"];
   model_label_.textColor = [NSColor colorWithRed:0.55 green:0.82 blue:0.92 alpha:1];
@@ -188,7 +215,7 @@ struct Metrics {
   metrics_label_.textColor = [NSColor colorWithRed:0.65 green:0.86 blue:0.72 alpha:1];
   metrics_label_.frame = NSMakeRect(32, 112, 848, 28);
   [content addSubview:metrics_label_];
-  NSTextField* hint = [NSTextField labelWithString:@"Input: 16 kHz mono · 160 samples/frame · Metal output path · Permission required"];
+  NSTextField* hint = [NSTextField labelWithString:@"Input: 16 kHz mono · 160 samples/frame · CPU + Metal · Trace uploads metadata only"];
   hint.textColor = [NSColor tertiaryLabelColor];
   hint.frame = NSMakeRect(32, 80, 850, 22);
   [content addSubview:hint];
@@ -204,6 +231,9 @@ struct Metrics {
   demo_mix_popup_ = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(580, 30, 145, 30) pullsDown:NO];
   [demo_mix_popup_ addItemsWithTitles:@[@"Background −18 dB", @"Background −12 dB", @"Background −24 dB", @"Background −3 dB", @"Equal voices 0 dB"]];
   [content addSubview:demo_mix_popup_];
+  NSButton* open_trace = [NSButton buttonWithTitle:@"Open Trace" target:self action:@selector(openTrace:)];
+  open_trace.frame = NSMakeRect(745, 30, 130, 30);
+  [content addSubview:open_trace];
   record_button_ = [NSButton buttonWithTitle:@"Record A/B Test" target:self action:@selector(recordComparison:)];
   record_button_.frame = NSMakeRect(32, 0, 180, 28);
   [content addSubview:record_button_];
@@ -224,6 +254,7 @@ struct Metrics {
 
 - (void)recordComparison:(id)sender {
   (void)sender;
+  if (processing_.load()) { demo_label_.stringValue = @"Please wait for the current test"; return; }
   if (!session_) { demo_label_.stringValue = @"A/B test: load the model first"; return; }
   if (engine_ == nil) { demo_label_.stringValue = @"A/B test: start the microphone first"; return; }
   if (!recording_) {
@@ -247,6 +278,11 @@ struct Metrics {
   [engine_.inputNode removeTapOnBus:0];
   [engine_ stop];
   engine_ = nil;
+  {
+    std::lock_guard lock(pipeline_mutex_);
+    session_->set_trace_sink(nullptr);
+    if (live_trace_) live_trace_->emit("hush.app", "run_complete", "source=microphone");
+  }
   auto native_samples = std::make_shared<std::vector<float>>();
   {
     std::lock_guard<std::mutex> lock(recording_mutex_);
@@ -259,8 +295,16 @@ struct Metrics {
   const double native_sample_rate = capture_format_.sampleRate;
   record_button_.title = @"Record A/B Test";
   demo_label_.stringValue = @"A/B test: processing the complete recording…";
+  processing_.store(true);
+  auto trace = make_hush_trace("recording");
+  latest_trace_ = trace;
+  auto offline_model = std::make_shared<runtime::HushModel>(*model_);
+  const bool use_metal = backend_->name() == "metal";
   dispatch_async(recording_queue_, ^{
+    @autoreleasepool {
     try {
+      const auto conversion_start = std::chrono::steady_clock::now();
+      trace->emit("hush.capture", "stage_start", "native_capture_to_16k");
       const AVAudioFrameCount native_frames = native_samples->size();
       NSMutableArray<AVAudioPCMBuffer*>* native_chunks = [NSMutableArray array];
       AVAudioFormat* native_format = [[AVAudioFormat alloc]
@@ -294,7 +338,15 @@ struct Metrics {
       }
       std::vector<float> raw(target_buffer.frameLength);
       std::copy_n(target_buffer.floatChannelData[0], target_buffer.frameLength, raw.data());
-      runtime::HushStreamSession offline_session(*self->model_, *self->backend_, {});
+      trace->emit("hush.capture", "stage_complete",
+                  "native_capture_to_16k samples=" + std::to_string(raw.size()), raw.size() * sizeof(float),
+                  std::chrono::duration<double, std::milli>(
+                      std::chrono::steady_clock::now() - conversion_start).count());
+      std::unique_ptr<runtime::Backend> offline_backend;
+      if (use_metal) offline_backend = std::make_unique<runtime::MetalBackend>();
+      else offline_backend = std::make_unique<runtime::CPUBackend>();
+      runtime::HushStreamSession offline_session(*offline_model, *offline_backend, {});
+      offline_session.set_trace_sink(trace.get());
       runtime::MemoryPool offline_pool;
       std::vector<float> enhanced; enhanced.reserve(raw.size());
       for (std::size_t offset = 0; offset < raw.size(); offset += 160 * 32) {
@@ -309,7 +361,7 @@ struct Metrics {
           frames.push_back(runtime::AudioFrame::mono_16k(std::move(samples)));
         }
         const auto outputs = offline_session.process_audio_batch(frames, "feat_erb", "feat_spec", "m",
-                                                                  *self->backend_, offline_pool);
+                                                                  *offline_backend, offline_pool);
         for (const auto& output : outputs) enhanced.insert(enhanced.end(), output.samples().begin(), output.samples().end());
         offline_pool.reset();
       }
@@ -329,31 +381,43 @@ struct Metrics {
       runtime::write_wav_mono16("/tmp/hush-mic-bypass.wav", raw);
       runtime::write_wav_mono16("/tmp/hush-mic-enhanced.wav", self->enhanced_recording_);
       const double seconds = static_cast<double>(raw.size()) / 16000.0;
+      trace->emit("hush.app", "run_complete", "source=recording samples=" + std::to_string(raw.size()),
+                  enhanced.size() * sizeof(float));
+      self->processing_.store(false);
       dispatch_async(dispatch_get_main_queue(), ^{
         self->demo_label_.stringValue = [NSString stringWithFormat:@"A/B ready · %.2fs · %@ peak protected", seconds, clipped ? @"Hush" : @"No"];
         // Resume the live monitor after the complete recording has been
         // materialized. The next tap starts from an empty converter state.
         if (self->engine_ == nil) [self toggle:nil];
+        self->latest_trace_ = trace;
       });
     } catch (const std::exception& error) {
       const std::string message = error.what();
+      trace->emit("hush.app", "run_error", message);
+      self->processing_.store(false);
       dispatch_async(dispatch_get_main_queue(), ^{
         self->demo_label_.stringValue = [NSString stringWithUTF8String:message.c_str()];
         if (self->engine_ == nil) [self toggle:nil];
+        self->latest_trace_ = trace;
       });
+    }
     }
   });
 }
 
 - (void)generateInterferenceDemo:(id)sender {
-  if (!model_) { demo_label_.stringValue = @"Demo: load the model first"; return; }
+  if (processing_.exchange(true)) { demo_label_.stringValue = @"Please wait for the current test"; return; }
+  if (recording_.load()) { processing_.store(false); demo_label_.stringValue = @"Stop A/B recording first"; return; }
+  if (!model_) { processing_.store(false); demo_label_.stringValue = @"Demo: load the model first"; return; }
   NSString* target_path = [[NSBundle mainBundle] pathForResource:@"hush-demo-target" ofType:@"wav"];
   NSString* background_path = [[NSBundle mainBundle] pathForResource:@"hush-demo-background" ofType:@"wav"];
-  if (target_path == nil || background_path == nil) { demo_label_.stringValue = @"Speech demo recordings are missing from the app bundle"; return; }
+  if (target_path == nil || background_path == nil) { processing_.store(false); demo_label_.stringValue = @"Speech demo recordings are missing from the app bundle"; return; }
   const float levels[] = {18.0f, 12.0f, 24.0f, 3.0f, 0.0f};
   const float input_sir = levels[demo_mix_popup_.indexOfSelectedItem];
   const bool use_metal = backend_->name() == "metal";
   auto demo_model = std::make_shared<runtime::HushModel>(*model_);
+  auto trace = make_hush_trace("background");
+  latest_trace_ = trace;
   NSButton* generate_button = [sender isKindOfClass:[NSButton class]] ? sender : nil;
   generate_button.enabled = NO;
   demo_label_.stringValue = @"Speech demo: processing two independent synthesized voices…";
@@ -370,6 +434,7 @@ struct Metrics {
       if (use_metal) demo_backend = std::make_unique<runtime::MetalBackend>();
       else demo_backend = std::make_unique<runtime::CPUBackend>();
       runtime::HushStreamSession demo_session(*demo_model, *demo_backend, {});
+      demo_session.set_trace_sink(trace.get());
       runtime::MemoryPool demo_pool;
       std::vector<float> enhanced; enhanced.reserve(total);
       for (std::size_t offset = 0; offset < total; offset += 160) {
@@ -382,16 +447,29 @@ struct Metrics {
       }
       enhanced.resize(total);
       runtime::write_wav_mono16("/tmp/hush-background-output.wav", enhanced);
+      trace->emit("hush.app", "run_complete", "source=background samples=" + std::to_string(total) +
+                  " input_sir_db=" + std::to_string(input_sir), enhanced.size() * sizeof(float));
+      self->processing_.store(false);
       dispatch_async(dispatch_get_main_queue(), ^{
         generate_button.enabled = YES;
-        demo_label_.stringValue = [NSString stringWithFormat:@"Speech demo ready · %.2fs · target/background %.0f dB · compare Target, Mixed, Hush", total / 16000.0, input_sir];
+        demo_label_.stringValue = [NSString stringWithFormat:@"Speech demo ready · %.2fs · target/background %.0f dB · compare Mixed / Hush · Open Trace", total / 16000.0, input_sir];
       });
     } catch (const std::exception& error) {
       const std::string message = error.what();
+      trace->emit("hush.app", "run_error", message);
+      self->processing_.store(false);
       dispatch_async(dispatch_get_main_queue(), ^{ generate_button.enabled = YES; demo_label_.stringValue = [NSString stringWithUTF8String:message.c_str()]; });
     }
     }
   });
+}
+
+- (void)openTrace:(id)sender {
+  (void)sender;
+  NSString* url = latest_trace_
+      ? [NSString stringWithFormat:@"http://81.71.150.26/?run=%s#realTrace", latest_trace_->run_id().c_str()]
+      : @"http://81.71.150.26/#realTrace";
+  [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:url]];
 }
 
 - (void)playEnhancedOutput:(id)sender { (void)sender; [self playDemoFile:@"/tmp/hush-background-output.wav"]; }
@@ -423,11 +501,17 @@ struct Metrics {
 }
 
 - (void)loadModel:(NSString*)path {
+  if (engine_ != nil || processing_.load()) { status_label_.stringValue = @"Stop the microphone and wait for tests before loading a model"; return; }
   try {
-    model_ = std::make_unique<runtime::HushModel>(runtime::HushModel::load(path.UTF8String));
-    if ([backend_popup_.titleOfSelectedItem isEqualToString:@"Metal"]) backend_ = std::make_unique<runtime::MetalBackend>();
-    else backend_ = std::make_unique<runtime::CPUBackend>();
-    session_ = std::make_unique<runtime::HushStreamSession>(*model_, *backend_, std::vector<runtime::StateBinding>{});
+    auto model = std::make_unique<runtime::HushModel>(runtime::HushModel::load(path.UTF8String));
+    std::unique_ptr<runtime::Backend> backend;
+    if ([backend_popup_.titleOfSelectedItem isEqualToString:@"Metal"]) backend = std::make_unique<runtime::MetalBackend>();
+    else backend = std::make_unique<runtime::CPUBackend>();
+    auto session = std::make_unique<runtime::HushStreamSession>(*model, *backend);
+    session_.reset();
+    backend_ = std::move(backend);
+    model_ = std::move(model);
+    session_ = std::move(session);
     pool_ = std::make_unique<runtime::MemoryPool>();
     model_label_.stringValue = [NSString stringWithFormat:@"Model: %@ · 16 kHz · encoder ready", path.lastPathComponent];
     status_label_.stringValue = @"Ready. Press Start Microphone.";
@@ -438,10 +522,16 @@ struct Metrics {
 
 - (void)toggle:(id)sender {
   (void)sender;
+  if (processing_.load()) { status_label_.stringValue = @"Wait for the current test"; return; }
   if (engine_ != nil) {
     [engine_.inputNode removeTapOnBus:0];
     [engine_ stop];
     engine_ = nil;
+    {
+      std::lock_guard lock(pipeline_mutex_);
+      session_->set_trace_sink(nullptr);
+      if (live_trace_) live_trace_->emit("hush.app", "run_complete", "source=microphone");
+    }
     start_button_.title = @"Start Microphone";
     status_label_.stringValue = @"Stopped";
     return;
@@ -471,6 +561,9 @@ struct Metrics {
 - (void)startMicrophoneEngine {
   if (engine_ != nil || !session_) return;
   session_->reset();
+  live_trace_ = make_hush_trace("microphone");
+  latest_trace_ = live_trace_;
+  session_->set_trace_sink(live_trace_.get());
   pool_->reset();
   pending_audio_.clear();
   engine_ = [[AVAudioEngine alloc] init];
@@ -481,6 +574,7 @@ struct Metrics {
   capture_format_ = input_format;
   [input installTapOnBus:0 bufferSize:480 format:input_format block:^(AVAudioPCMBuffer* buffer, AVAudioTime*) {
     @autoreleasepool {
+    std::lock_guard pipeline_lock(pipeline_mutex_);
     if (buffer.floatChannelData == nullptr || converter_ == nil) return;
     if (recording_.load()) {
       std::lock_guard<std::mutex> lock(recording_mutex_);
@@ -531,12 +625,29 @@ struct Metrics {
     }
   }];
   NSError* error = nil;
-  if (![engine_ startAndReturnError:&error]) { status_label_.stringValue = error.localizedDescription; engine_ = nil; return; }
+  if (![engine_ startAndReturnError:&error]) {
+    status_label_.stringValue = error.localizedDescription;
+    [input removeTapOnBus:0];
+    engine_ = nil;
+    std::lock_guard lock(pipeline_mutex_);
+    session_->set_trace_sink(nullptr);
+    live_trace_->emit("hush.app", "run_error", "microphone_engine_start_failed");
+    return;
+  }
   start_button_.title = @"Stop Microphone"; status_label_.stringValue = @"Running Metal microphone pipeline";
 }
 
 - (void)refreshUI:(NSTimer*)timer {
   (void)timer;
+  if (latest_trace_) {
+    const auto trace_status = latest_trace_->status();
+    NSString* state = !latest_trace_->enabled() ? @"disabled" : !trace_status.error.empty() ? @"upload retry pending" :
+        trace_status.pending_bytes ? @"uploading" : @"synced";
+    trace_label_.stringValue = [NSString stringWithFormat:@"Trace: %zu uploaded / %zu collected · %zu dropped · %@ · Open Trace",
+        trace_status.uploaded_events, trace_status.accepted_events, trace_status.dropped_events,
+        state];
+    trace_label_.toolTip = [NSString stringWithUTF8String:latest_trace_->run_id().c_str()];
+  }
   const double latency = metrics_.latency_ms.load();
   metrics_label_.stringValue = [NSString stringWithFormat:@"FRAMES %-6llu   LATENCY %6.2f ms   INPUT RMS %.5f   OUTPUT RMS %.5f",
                                 metrics_.frames.load(), latency, metrics_.input_rms.load(), metrics_.output_rms.load()];

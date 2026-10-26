@@ -362,10 +362,15 @@ Tensor run_gru_step(const OnnxNode& node,
 
 std::unordered_map<std::string, Tensor> OnnxExecutor::run(
     const OnnxGraph& graph, const std::unordered_map<std::string, Tensor>& inputs,
-    MemoryPool& pool, OnnxStreamState* stream_state) const {
+    MemoryPool& pool, OnnxStreamState* stream_state, std::string_view trace_stage) const {
   const auto found = plans_.find(&graph);
-  if (found != plans_.end()) return run(graph, found->second, inputs, pool, stream_state);
-  return run(graph, OnnxExecutionPlan::compile(graph), inputs, pool, stream_state);
+  if (found != plans_.end()) return run(graph, found->second, inputs, pool, stream_state, trace_stage);
+  return run(graph, OnnxExecutionPlan::compile(graph), inputs, pool, stream_state, trace_stage);
+}
+
+void OnnxExecutor::set_trace_sink(TraceSink* sink, std::size_t node_limit) {
+  trace_ = sink;
+  trace_nodes_remaining_ = node_limit;
 }
 
 void OnnxExecutor::prepare(const OnnxGraph& graph) {
@@ -383,7 +388,7 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
     const OnnxExecutionPlan& plan,
     const std::unordered_map<std::string, Tensor>& inputs,
     MemoryPool& pool,
-    OnnxStreamState* stream_state) const {
+    OnnxStreamState* stream_state, std::string_view trace_stage) const {
   std::unordered_map<std::string, Tensor> tensors = inputs;
   const auto prepared = initializers_.find(&graph);
   if (prepared != initializers_.end()) {
@@ -396,6 +401,11 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
   for (const PlannedNode& planned : plan.nodes()) {
     const OnnxNode& node = graph.nodes[planned.graph_index];
     const auto node_start = std::chrono::steady_clock::now();
+    TraceSink* node_trace = trace_ && trace_nodes_remaining_ > 0 ? trace_ : nullptr;
+    if (node_trace) --trace_nodes_remaining_;
+    TraceSpan trace(node_trace, trace_stage,
+                    node_trace ? "node=" + node.name + " op=" + node.op_type : "", "node");
+    bool dispatched = false;
     if (node.outputs.empty() || node.outputs.size() > 2) throw std::runtime_error("ONNX node output count unsupported: " + node.name);
     Tensor output;
     if (node.op_type == "Add" || node.op_type == "Mul" || node.op_type == "MatMul") {
@@ -407,16 +417,22 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
                   << " rhs=" << rhs.debug_string() << "\n";
       }
       if (node.op_type == "Add") {
+        dispatched = lhs.shape() == rhs.shape();
         output = lhs.shape() == rhs.shape() ? backend_.add(lhs, rhs, pool) : broadcast_add(lhs, rhs, pool);
       }
       else if (node.op_type == "Mul") {
+        dispatched = lhs.shape() == rhs.shape();
         output = lhs.shape() == rhs.shape() ? backend_.mul(lhs, rhs, pool) : broadcast_mul(lhs, rhs, pool);
       }
       else if (lhs.rank() == 3) output = batched_matmul(lhs, rhs, pool);
-      else output = backend_.matmul(lhs, rhs, pool);
+      else {
+        dispatched = true;
+        output = backend_.matmul(lhs, rhs, pool);
+      }
     } else if (node.op_type == "Relu" || node.op_type == "Sigmoid" || node.op_type == "Tanh") {
       if (node.inputs.size() != 1) throw std::runtime_error("activation node requires one input");
       const Tensor& input = lookup(tensors, node.inputs[0]);
+      dispatched = true;
       output = node.op_type == "Relu" ? backend_.relu(input, pool)
           : node.op_type == "Sigmoid" ? backend_.sigmoid(input, pool) : backend_.tanh(input, pool);
     } else if (node.op_type == "Conv") {
@@ -442,6 +458,7 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
       }
       if (pads[0] != pads[2] || pads[1] != pads[3]) throw std::runtime_error("asymmetric Conv padding is unsupported");
       try {
+        dispatched = true;
         output = backend_.conv2d(input, weights, bias, static_cast<std::size_t>(strides[0]),
                                  static_cast<std::size_t>(strides[1]), static_cast<std::size_t>(pads[0]),
                                  static_cast<std::size_t>(pads[1]), static_cast<std::size_t>(groups[0]), pool);
@@ -451,6 +468,7 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
                                  " " + weights.debug_string() + ": " + error.what());
       }
     } else if (node.op_type == "ConvTranspose") {
+      dispatched = true;
       if (node.inputs.size() < 2 || node.inputs.size() > 3) {
         throw std::runtime_error("ConvTranspose input count unsupported");
       }
@@ -754,6 +772,7 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
           }
         }
       } else if (equation == "i,ij->j") {
+        dispatched = true;
         if (lhs.rank() != 1 || rhs.rank() != 2 || lhs.shape()[0] != rhs.shape()[0]) {
           throw std::runtime_error("Einsum i,ij->j shape mismatch");
         }
@@ -767,6 +786,15 @@ std::unordered_map<std::string, Tensor> OnnxExecutor::run(
       throw std::runtime_error("unsupported ONNX op in stage 15: " + node.op_type);
     }
     tensors[node.outputs[0]] = output;
+    if (node_trace) {
+      std::string shape = "shape=[";
+      for (std::size_t dimension = 0; dimension < output.rank(); ++dimension) {
+        if (dimension > 0) shape += ",";
+        shape += std::to_string(output.shape()[dimension]);
+      }
+      shape += "] device=" + std::string(dispatched ? backend_.name() : "cpu");
+      trace.output(output.nbytes(), shape);
+    }
     if (node.outputs.size() == 2 && node.op_type == "GRU") {
       if (output.rank() == 4) {
         const std::size_t hidden_size = output.shape()[3];

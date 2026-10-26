@@ -17,7 +17,9 @@ Tensor owned_copy(const Tensor& input) {
 }
 
 Tensor apply_deep_filter(const Tensor& spectrum, const Tensor& coefs, std::size_t df_bins,
-                         std::size_t df_order, std::vector<float>& history, MemoryPool& pool) {
+                         std::size_t df_order, std::vector<float>& history, MemoryPool& pool,
+                         TraceSink* sink) {
+  TraceSpan trace(sink, "hush.deep_filter", "device=cpu df_bins=" + std::to_string(df_bins));
   if (spectrum.rank() != 3 || spectrum.shape()[2] != 2 || coefs.rank() != 4 ||
       coefs.shape()[0] != 1 || coefs.shape()[2] != df_bins || coefs.shape()[3] != df_order * 2) {
     return Tensor();
@@ -51,11 +53,13 @@ Tensor apply_deep_filter(const Tensor& spectrum, const Tensor& coefs, std::size_
     if (df_order > 1) std::copy_n(spectrum.data<float>() + frame * bins * 2, df_bins * 2,
                                   history.data() + (df_order - 2) * df_bins * 2);
   }
+  trace.output(output.nbytes(), "shape=[1,161,2]");
   return output;
 }
 
 std::vector<float> synthesize_hush(const Tensor& spectrum, std::size_t fft_size, std::size_t hop_size,
-                                   std::vector<float>& history) {
+                                   std::vector<float>& history, TraceSink* sink) {
+  TraceSpan trace(sink, "hush.synthesis", "device=cpu vorbis_overlap_add");
   constexpr float kPi = 3.14159265358979323846f;
   if (history.size() != fft_size - hop_size) history.assign(fft_size - hop_size, 0.0f);
   const std::size_t bins = spectrum.shape()[1];
@@ -86,6 +90,15 @@ std::vector<float> synthesize_hush(const Tensor& spectrum, std::size_t fft_size,
     for (std::size_t sample = 0; sample < hop_size; ++sample) output.push_back(time[sample] + history[sample]);
     std::copy(time.begin() + hop_size, time.end(), history.begin());
   }
+  trace.output(output.size() * sizeof(float), "samples=" + std::to_string(output.size()));
+  return output;
+}
+
+Tensor apply_mask(const Tensor& spectrum, const Tensor& mask, const Tensor& projection,
+                  MemoryPool& pool, TraceSink* sink) {
+  TraceSpan trace(sink, "hush.mask", "device=cpu erb_mask");
+  auto output = cpu::apply_erb_mask(spectrum, mask, projection, &pool);
+  trace.output(output.nbytes());
   return output;
 }
 
@@ -95,7 +108,7 @@ HushStreamSession::HushStreamSession(
     const HushModel& model,
     const Backend& backend,
     std::vector<StateBinding> encoder_state)
-    : model_(model), executor_(backend), encoder_state_bindings_(std::move(encoder_state)),
+    : model_(model), backend_(&backend), executor_(backend), encoder_state_bindings_(std::move(encoder_state)),
       frontend_(model.config) {
   model_.config.validate();
   executor_.prepare(model_.encoder);
@@ -118,6 +131,30 @@ HushStreamSession::HushStreamSession(
   }
 }
 
+HushStreamSession::~HushStreamSession() {
+  if (trace_) backend_->set_trace_sink(nullptr);
+}
+
+void HushStreamSession::set_trace_sink(TraceSink* sink) {
+  trace_ = sink;
+  executor_.set_trace_sink(sink);
+  backend_->set_trace_sink(sink);
+  if (trace_) trace_->emit("hush.session", "session_ready",
+      "model=hush sr=" + std::to_string(model_.config.sample_rate) +
+      " hop=" + std::to_string(model_.config.hop_size) +
+      " frontend=cpu synthesis=cpu node_detail_limit=1024");
+}
+
+HushFeatures HushStreamSession::process_features(const AudioFrame& frame) {
+  TraceSpan trace(active_trace(), "hush.frontend", "device=cpu frame=" + std::to_string(audio_frames_) +
+                  " samples=" + std::to_string(frame.sample_count()));
+  auto features = frontend_.process(frame);
+  trace.output(features.spectrum.nbytes() + features.erb.nbytes() + features.df.nbytes(),
+               "spectrum=[1,161,2] erb=[1,32] df=[2,1,64]");
+  ++audio_frames_;
+  return features;
+}
+
 void HushStreamSession::validate_frame(const AudioFrame& frame) const {
   if (frame.format().sample_rate != model_.config.sample_rate ||
       frame.format().channels != 1 || frame.sample_count() != model_.config.hop_size) {
@@ -129,6 +166,7 @@ std::unordered_map<std::string, Tensor> HushStreamSession::process_encoder(
     const std::unordered_map<std::string, Tensor>& inputs,
     MemoryPool& pool,
     OnnxStreamState* stream_state) {
+  TraceSpan trace(active_trace(), "hush.encoder", "enc.onnx batch=" + std::to_string(frame_index_));
   std::unordered_map<std::string, Tensor> frame_inputs = inputs;
   for (const std::string& input_name : model_.encoder.inputs) {
     bool is_initializer = false;
@@ -153,7 +191,8 @@ std::unordered_map<std::string, Tensor> HushStreamSession::process_encoder(
     }
   }
 
-  auto outputs = executor_.run(model_.encoder, frame_inputs, pool, stream_state);
+  auto outputs = executor_.run(model_.encoder, frame_inputs, pool, stream_state, "hush.encoder");
+  trace.output(pool.used_bytes(), "pool_used_bytes=" + std::to_string(pool.used_bytes()));
   for (const StateBinding& binding : encoder_state_bindings_) {
     const auto output = outputs.find(binding.output_name);
     if (output == outputs.end()) {
@@ -179,7 +218,7 @@ std::unordered_map<std::string, Tensor> HushStreamSession::process_audio_frame(
     const std::string& feature_input_name,
     MemoryPool& pool) {
   validate_frame(frame);
-  const HushFeatures features = frontend_.process(frame);
+  const HushFeatures features = process_features(frame);
   return process_encoder({{feature_input_name, features.erb}}, pool);
 }
 
@@ -202,8 +241,20 @@ HushDecoderOutputs HushStreamSession::process_decoders(
     return inputs;
   };
   HushDecoderOutputs outputs;
-  outputs.erb = executor_.run(model_.erb_decoder, bind_encoder_outputs(erb_inputs), pool, erb_state);
-  outputs.df = executor_.run(model_.df_decoder, bind_encoder_outputs(df_inputs), pool, df_state);
+  {
+    TraceSpan trace(active_trace(), "hush.erb_decoder", "erb_dec.onnx batch=" + std::to_string(frame_index_));
+    outputs.erb = executor_.run(model_.erb_decoder, bind_encoder_outputs(erb_inputs), pool, erb_state,
+                                "hush.erb_decoder");
+    const auto mask = outputs.erb.find("m");
+    if (mask != outputs.erb.end()) trace.output(mask->second.nbytes());
+  }
+  {
+    TraceSpan trace(active_trace(), "hush.df_decoder", "df_dec.onnx batch=" + std::to_string(frame_index_));
+    outputs.df = executor_.run(model_.df_decoder, bind_encoder_outputs(df_inputs), pool, df_state,
+                               "hush.df_decoder");
+    const auto coefs = outputs.df.find("coefs");
+    if (coefs != outputs.df.end()) trace.output(coefs->second.nbytes());
+  }
   return outputs;
 }
 
@@ -213,7 +264,7 @@ std::unordered_map<std::string, Tensor> HushStreamSession::process_audio_frame(
     const std::string& df_input_name,
     MemoryPool& pool) {
   validate_frame(frame);
-  const HushFeatures features = frontend_.process(frame);
+  const HushFeatures features = process_features(frame);
   Tensor erb = features.erb;
   Tensor df = features.df;
   bool spatial_encoder = false;
@@ -236,7 +287,10 @@ AudioFrame HushStreamSession::process_audio(
       return process_audio_batch({frame}, erb_input_name, df_input_name, mask_output_name, backend, pool).front();
     }
   }
-  const HushFeatures features = frontend_.process(frame);
+  trace_batch_enabled_ = frame_index_ < 3 || frame_index_ % 100 == 0;
+  if (trace_) backend_->set_trace_sink(active_trace());
+  TraceSpan trace(active_trace(), "hush.batch", "frames=1 frame_start=" + std::to_string(audio_frames_));
+  const HushFeatures features = process_features(frame);
   Tensor erb = features.erb;
   Tensor df = features.df;
   if (erb.rank() == 2) erb = cpu::reshape(erb, {1, 1, erb.shape()[0], erb.shape()[1]});
@@ -248,7 +302,7 @@ AudioFrame HushStreamSession::process_audio(
       ? lsnr_iterator->second.data<float>()[0] : 0.0f;
   if (lsnr > 35.0f) {
     const auto audio = synthesize_hush(features.spectrum, model_.config.fft_size,
-                                       model_.config.hop_size, synthesis_history_);
+                                       model_.config.hop_size, synthesis_history_, active_trace());
     return AudioFrame(AudioFormat{model_.config.sample_rate, 1}, audio);
   }
   const auto decoder_outputs = process_decoders(encoder_outputs, {}, {}, pool);
@@ -265,7 +319,7 @@ AudioFrame HushStreamSession::process_audio(
     std::copy_n(mask.data<float>() + time * bands, bands, values.data());
     mask = Tensor::from_vector({1, bands}, values);
   }
-  const Tensor masked = cpu::apply_erb_mask(features.spectrum, mask, frontend_.erb_projection(), &pool);
+  const Tensor masked = apply_mask(features.spectrum, mask, frontend_.erb_projection(), pool, active_trace());
   Tensor enhanced_spectrum = masked;
   const auto coefficient_iterator = decoder_outputs.df.find("coefs");
   if (coefficient_iterator != decoder_outputs.df.end()) {
@@ -279,7 +333,7 @@ AudioFrame HushStreamSession::process_audio(
     }
     const Tensor deep_filtered = apply_deep_filter(features.spectrum, coefficients,
                                                     model_.config.df_bins, model_.config.df_order,
-                                                    df_history_, pool);
+                                                    df_history_, pool, active_trace());
     if (deep_filtered.numel() != 0) {
       enhanced_spectrum = deep_filtered;
       const std::size_t low_bins = std::min(model_.config.df_bins, masked.shape()[1]);
@@ -290,7 +344,8 @@ AudioFrame HushStreamSession::process_audio(
     }
   }
   const std::vector<float> audio = synthesize_hush(enhanced_spectrum, model_.config.fft_size,
-                                                   model_.config.hop_size, synthesis_history_);
+                                                   model_.config.hop_size, synthesis_history_, active_trace());
+  trace.output(audio.size() * sizeof(float));
   return AudioFrame(AudioFormat{model_.config.sample_rate, 1},
                     audio);
 }
@@ -302,7 +357,11 @@ std::vector<AudioFrame> HushStreamSession::process_audio_batch(
     const std::string& mask_output_name,
     const Backend& backend,
     MemoryPool& pool) {
-  (void)backend;
+  trace_batch_enabled_ = frame_index_ < 3 || frame_index_ % (frames.size() > 1 ? 4 : 100) == 0;
+  if (trace_) backend_->set_trace_sink(active_trace());
+  TraceSpan trace(active_trace(), "hush.batch", "backend=" + std::string(backend.name()) +
+                  " frames=" + std::to_string(frames.size()) +
+                  " frame_start=" + std::to_string(audio_frames_));
   if (frames.empty() || frames.size() > 32) throw std::invalid_argument("Hush batch must contain 1..32 frames");
   const std::size_t time_steps = frames.size();
   const std::size_t erb_bands = model_.config.erb_bands;
@@ -313,7 +372,7 @@ std::vector<AudioFrame> HushStreamSession::process_audio_batch(
   spectra.reserve(time_steps);
   for (std::size_t time = 0; time < frames.size(); ++time) {
     validate_frame(frames[time]);
-    const HushFeatures features = frontend_.process(frames[time]);
+    const HushFeatures features = process_features(frames[time]);
     spectra.push_back(features.spectrum);
     std::copy_n(features.erb.data<float>(), erb_bands, erb_values.data() + time * erb_bands);
     for (std::size_t bin = 0; bin < df_bins; ++bin) {
@@ -337,7 +396,7 @@ std::vector<AudioFrame> HushStreamSession::process_audio_batch(
     const std::size_t mask_time = mask_sequence.rank() == 4 ? std::min(time, mask_sequence.shape()[2] - 1) : 0;
     std::copy_n(mask_sequence.data<float>() + mask_time * bands, bands, mask_values.data());
     const Tensor mask = Tensor::from_vector({1, bands}, mask_values);
-    const Tensor masked = cpu::apply_erb_mask(spectra[time], mask, frontend_.erb_projection(), &pool);
+    const Tensor masked = apply_mask(spectra[time], mask, frontend_.erb_projection(), pool, active_trace());
     Tensor enhanced_spectrum = masked;
     if (coefficient_iterator != decoder_outputs.df.end()) {
       const Tensor& sequence = coefficient_iterator->second;
@@ -346,7 +405,7 @@ std::vector<AudioFrame> HushStreamSession::process_audio_batch(
       std::copy_n(sequence.data<float>() + time * coefficient_size, coefficient_size, coefficient_values.data());
       const Tensor coefficients = Tensor::from_vector({1, 1, sequence.shape()[2], sequence.shape()[3]}, coefficient_values);
       const Tensor deep_filtered = apply_deep_filter(spectra[time], coefficients, model_.config.df_bins,
-                                                      model_.config.df_order, df_history_, pool);
+                                                      model_.config.df_order, df_history_, pool, active_trace());
       if (deep_filtered.numel() != 0) {
         enhanced_spectrum = deep_filtered;
         const std::size_t low_bins = std::min(model_.config.df_bins, masked.shape()[1]);
@@ -357,8 +416,17 @@ std::vector<AudioFrame> HushStreamSession::process_audio_batch(
     }
     outputs.emplace_back(AudioFormat{model_.config.sample_rate, 1},
                          synthesize_hush(enhanced_spectrum, model_.config.fft_size,
-                                         model_.config.hop_size, synthesis_history_));
+                                         model_.config.hop_size, synthesis_history_, active_trace()));
   }
+  if (active_trace()) active_trace()->emit("hush.state", "state_retained",
+      "frames=" + std::to_string(audio_frames_) +
+      " recurrent=" + std::to_string(encoder_stream_state_.recurrent.size() +
+                                    erb_stream_state_.recurrent.size() + df_stream_state_.recurrent.size()) +
+      " padding=" + std::to_string(encoder_stream_state_.padding.size() +
+                                  erb_stream_state_.padding.size() + df_stream_state_.padding.size()) +
+      " pool_used_bytes=" + std::to_string(pool.used_bytes()),
+      (df_history_.size() + synthesis_history_.size()) * sizeof(float));
+  trace.output(outputs.size() * model_.config.hop_size * sizeof(float));
   return outputs;
 }
 
@@ -371,6 +439,9 @@ void HushStreamSession::reset() {
   erb_stream_state_ = {};
   df_stream_state_ = {};
   frame_index_ = 0;
+  audio_frames_ = 0;
+  trace_batch_enabled_ = true;
+  if (trace_) trace_->emit("hush.session", "session_reset", "new_stream");
 }
 
 bool HushStreamSession::has_state(const std::string& input_name) const {

@@ -262,10 +262,16 @@
     </aside>
   </div>
 
-  <section class="trace-view">
+  <section class="trace-view" id="realTrace">
     <div class="section-title"><h2>Trace / 证据来源</h2><span class="pill" id="traceStatus">STATIC</span></div>
     <p id="traceDescription">当前显示的是基于源码和当前验收结果的静态 walkthrough。点击“加载真实 trace”后，页面会尝试读取 InfluxDB；没有数据时仍保留这条真实 Hush 流程。</p>
     <div class="legend"><span class="static">静态 Hush walkthrough</span><span class="real">真实 Hush Influx trace</span><span class="old">旧版 MatMul / Add trace</span></div>
+    <div class="controls" style="justify-content:start;margin-bottom:12px">
+      <label>运行 <select id="traceRun" aria-label="选择一次运行"><option value="">暂无运行</option></select></label>
+      <button id="reloadTrace">刷新真实事件</button>
+      <label><input type="checkbox" id="autoTrace"> 每 10 秒刷新</label>
+    </div>
+    <p id="traceSummary"></p>
     <div class="trace-box" id="traceBox"><div class="trace-empty">尚未加载真实事件。静态流程不会把旧的 MatMul → Add 事件伪装成 Hush。</div></div>
   </section>
 
@@ -275,6 +281,7 @@
   </section>
 </main>
 
+<script src="/trace_data.js?v=20261026-1"></script>
 <script>
 (function () {
   "use strict";
@@ -300,6 +307,9 @@
   var cursor = 0;
   var timer = null;
   var traceEvents = [];
+  var traceRuns = [];
+  var loadingTrace = false;
+  var selectedRunId = new URLSearchParams(window.location.search).get("run") || "";
   var $ = function (id) { return document.getElementById(id); };
   function esc(value) {
     return String(value == null ? "" : value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -388,10 +398,8 @@
     render();
   }
   function isOldTrace(events) {
-    return events.some(function (event) {
-      var text = JSON.stringify(event).toLowerCase();
-      return text.indexOf("matmul") >= 0 || text.indexOf("hidden") >= 0 || text.indexOf("bias") >= 0;
-    }) && !events.some(function (event) { return JSON.stringify(event).toLowerCase().indexOf("hush") >= 0; });
+    return !events.some(function (event) { return event.stage.indexOf("hush.") === 0; }) &&
+      events.some(function (event) { return /metal demo|matmul_kernel|add_kernel/.test(event.detail || ""); });
   }
   function drawTrace(events, old) {
     if (!events.length) {
@@ -401,50 +409,66 @@
     var first = Date.parse(events[0].time || events[0]._time || new Date().toISOString());
     var last = Date.parse(events[events.length - 1].time || events[events.length - 1]._time || new Date().toISOString());
     var span = Math.max(1, last - first);
-    var label = old ? "旧版 demo trace（MatMul / Add）" : "真实 Hush trace";
-    var rows = events.slice(0, 160).map(function (event) {
+    var hush = events.some(function (event) { return event.stage.indexOf("hush.") === 0; });
+    var label = old ? "旧版 demo trace（MatMul / Add）" : hush ? "真实 Hush trace" : "来源未识别的真实事件";
+    var overview = events.filter(function (event) {
+      return event.event.indexOf("stage_") === 0 || event.stage === "hush.app" ||
+        event.event === "state_retained" || event.event === "session_ready";
+    });
+    var displayed = overview.concat(events.filter(function (event) { return overview.indexOf(event) < 0; })).slice(0, 160);
+    var rows = displayed.map(function (event) {
       var time = Date.parse(event.time || event._time || new Date().toISOString());
       var name = event.event || event._field || event.detail || "event";
       var left = Math.max(0, Math.min(96, (time - first) / span * 96));
-      var width = Math.max(1.2, Number(event.duration_ms || event.duration || 0) / span * 1000);
-      var klass = String(name).toLowerCase().indexOf("metal") >= 0 ? "metal" : String(name).toLowerCase().indexOf("cpu") >= 0 ? "cpu" : "memory";
-      return '<div class="trace-row"><div class="trace-label">' + esc(name) + '</div><div class="trace-lane"><div class="trace-bar ' + klass + '" style="left:' + left + '%;width:' + Math.min(45, width) + '%">' + esc(event.detail || event.stage || "") + '</div></div></div>';
+      var duration = Math.max(0, Number(event.duration_ms || 0));
+      var start = Math.max(0, (time - first - duration) / span * 100);
+      var width = Math.max(.3, duration / span * 100);
+      var klass = /device=metal/.test(event.detail) || event.stage === "metal" ? "metal" : "cpu";
+      var summary = event.stage + " · " + name + " · " + duration.toFixed(3) + " ms · " + event.bytes + " B · " + event.detail;
+      return '<div class="trace-row"><div class="trace-label" title="' + esc(summary) + '">' + esc(event.stage + " / " + name) +
+        '</div><div class="trace-lane"><div class="trace-bar ' + klass + '" title="' + esc(summary) +
+        '" style="left:' + Math.min(99.5, start) + '%;width:' + Math.min(100 - start, width) + '%">' + esc(summary) + '</div></div></div>';
     }).join("");
-    $("traceBox").innerHTML = '<div class="trace-empty">' + esc(label) + " · " + events.length + " events</div>" + rows;
+    $("traceBox").innerHTML = '<div class="trace-empty">' + esc(label) + " · " + events.length +
+      " events · 优先展示完整阶段，再列节点详情，最多 160 行。悬停查看阶段 / 耗时 / shape；时长为主机调用计时（含同步），不是 GPU 硬件时间。</div>" + rows;
   }
   function parseCsv(text) {
-    var lines = text.split(/\r?\n/).filter(function (line) {
-      return line.trim() && line.charAt(0) !== "#";
-    });
-    var headerIndex = lines.findIndex(function (line) { return line.split(",").indexOf("_time") >= 0; });
-    if (headerIndex < 0 || lines.length <= headerIndex + 1) return [];
-    var header = lines[headerIndex].split(",");
-    return lines.slice(headerIndex + 1).map(function (line) {
-      var values = [];
-      var current = "";
-      var quoted = false;
-      for (var index = 0; index < line.length; index += 1) {
-        var character = line.charAt(index);
-        if (character === '"') quoted = !quoted;
-        else if (character === "," && !quoted) { values.push(current); current = ""; }
-        else current += character;
-      }
-      values.push(current);
-      var item = {};
-      header.forEach(function (key, index) { item[key] = (values[index] || "").replace(/^"|"$/g, ""); });
-      return item;
-    }).filter(function (item) { return item._time && (item._field || item.event || item.detail || item._value); });
+    return window.RuntimeTraceData.parseCsv(text);
+  }
+  function showRun() {
+    var run = traceRuns.find(function (item) { return item.id === $("traceRun").value; });
+    if (!run) return;
+    selectedRunId = run.id;
+    var old = run.kind === "old";
+    $("traceStatus").className = "pill " + (old ? "old" : "live");
+    $("traceStatus").textContent = old ? "OLD TRACE" : run.kind === "hush" ? "REAL HUSH TRACE" : "UNKNOWN TRACE";
+    $("traceDescription").textContent = "Run ID: " + run.id +
+      "。下面是实际运行记录，上方流程仍是源码讲解。只上传计时、shape 与字节数，不上传录音。";
+    var stages = run.events.filter(function (event) { return event.event === "stage_complete"; });
+    var kinds = Array.from(new Set(stages.map(function (event) { return event.stage; })));
+    $("traceSummary").textContent = run.events.length + " 条事件 · " + kinds.join(" → ") +
+      " · " + (run.events.some(function (event) { return event.event === "run_complete"; }) ? "测试已结束" : "采集中 / 等待结束事件") +
+      " · 节点详情限前 1024 个，阶段采样为前 3 批及周期批次。";
+    drawTrace(run.events, old);
   }
   function loadTrace() {
+    if (loadingTrace) return;
+    loadingTrace = true;
     var api = $("api").value.replace(/\/$/, "");
     var org = $("org").value;
     var bucket = $("bucket").value;
     var token = $("token").value;
     $("traceStatus").textContent = "LOADING";
     $("traceDescription").textContent = "正在读取 InfluxDB 最近 24 小时事件；页面不会把旧的两节点 trace 改名成 Hush。";
-    var query = 'from(bucket: "' + bucket + '") |> range(start: -24h) |> sort(columns: ["_time"])';
+    var runId = new URLSearchParams(window.location.search).get("run") || "";
+    var runFilter = runId ? ' |> filter(fn: (r) => r.run_id == ' + JSON.stringify(runId) + ')' : "";
+    var query = 'from(bucket: ' + JSON.stringify(bucket) + ') |> range(start: -24h) |> filter(fn: (r) => r._measurement == "runtime_trace")' +
+      runFilter + ' |> group(columns: ["_field"]) |> sort(columns: ["_time"], desc: true) |> limit(n: 20000)';
+    var controller = new AbortController();
+    var queryTimeout = setTimeout(function () { controller.abort(); }, 15000);
     fetch(api + "/api/v2/query?org=" + encodeURIComponent(org), {
       method: "POST",
+      signal: controller.signal,
       headers: { "Authorization": "Token " + token, "Content-Type": "application/vnd.flux", "Accept": "application/csv" },
       body: query
     }).then(function (response) {
@@ -453,23 +477,27 @@
     }).then(function (text) {
       traceEvents = parseCsv(text);
       if (!traceEvents.length) {
+        traceRuns = [];
+        $("traceRun").innerHTML = '<option value="">暂无运行</option>';
+        $("traceSummary").textContent = "";
         $("traceStatus").className = "pill static";
         $("traceStatus").textContent = "STATIC";
         $("traceDescription").textContent = "InfluxDB 没有返回事件；当前页面保留静态 Hush 流程，避免回退到旧 MatMul → Add 叙事。";
         drawTrace([], false);
         return;
       }
-      var old = isOldTrace(traceEvents);
-      $("traceStatus").className = "pill " + (old ? "old" : "live");
-      $("traceStatus").textContent = old ? "OLD TRACE" : "REAL TRACE";
-      $("traceDescription").textContent = old ? "InfluxDB 返回的是旧版 MatMul / Add demo trace，已单独标记；主流程仍按当前 Hush runtime 展示。" : "InfluxDB 返回了事件；以下时间轴是实际记录，静态 walkthrough 仍用于解释 Hush 的完整数据流。";
-      drawTrace(traceEvents, old);
+      traceRuns = window.RuntimeTraceData.runs(traceEvents);
+      $("traceRun").innerHTML = traceRuns.map(function (run) {
+        return '<option value="' + esc(run.id) + '">' + esc(run.id + " · " + run.kind) + '</option>';
+      }).join("");
+      if (traceRuns.some(function (run) { return run.id === selectedRunId; })) $("traceRun").value = selectedRunId;
+      showRun();
     }).catch(function (error) {
       $("traceStatus").className = "pill static";
       $("traceStatus").textContent = "STATIC";
       $("traceDescription").textContent = "InfluxDB 暂无可用事件（" + error.message + "）；当前页面保留静态 Hush 流程，避免回退到旧 MatMul → Add 叙事。";
       drawTrace([], false);
-    });
+    }).finally(function () { clearTimeout(queryTimeout); loadingTrace = false; });
   }
   $("play").onclick = play;
   $("pause").onclick = stop;
@@ -477,9 +505,13 @@
   $("next").onclick = function () { move(1); };
   $("reset").onclick = function () { stop(); cursor = 0; render(); };
   $("config").onsubmit = function (event) { event.preventDefault(); loadTrace(); };
+  $("reloadTrace").onclick = loadTrace;
+  $("traceRun").onchange = showRun;
+  setInterval(function () { if ($("autoTrace").checked && !document.hidden) loadTrace(); }, 10000);
   $("token").value = localStorage.getItem("influx-token") || $("token").value;
   $("token").onchange = function () { localStorage.setItem("influx-token", $("token").value); };
   render();
+  if (selectedRunId) { $("autoTrace").checked = true; loadTrace(); }
 }());
 </script>
 </body>

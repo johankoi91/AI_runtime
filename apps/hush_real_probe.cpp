@@ -9,6 +9,9 @@
 #include "runtime/hush_model.h"
 #include "runtime/hush_session.h"
 #include "runtime/metal_backend.h"
+#if defined(__APPLE__)
+#include "runtime/influxdb_sink.h"
+#endif
 
 int main() {
   const char* path = std::getenv("HUSH_MODEL_BUNDLE");
@@ -118,7 +121,16 @@ int main() {
     } else {
       backend = std::make_unique<runtime::CPUBackend>();
     }
+#if defined(__APPLE__)
+    runtime::InfluxDbSink trace;
+#endif
     runtime::HushStreamSession session(model, *backend, {});
+#if defined(__APPLE__)
+    if (trace.enabled()) {
+      trace.emit("hush.app", "run_start", "source=real_probe");
+      session.set_trace_sink(&trace);
+    }
+#endif
     runtime::MemoryPool pool;
     runtime::HushFrontend frontend(model.config);
     std::vector<runtime::Tensor> erb_frames;
@@ -180,6 +192,15 @@ int main() {
     }
     std::cout << " checksum=" << checksum << " sum_abs=" << sum_abs
               << " sum_sq=" << sum_sq << " max_abs=" << max_abs << "\n";
+#if defined(__APPLE__)
+    if (trace.enabled()) {
+      trace.emit("hush.app", "run_complete", "source=real_probe", enhanced.sample_count() * sizeof(float));
+      const bool uploaded = trace.flush();
+      std::cout << "trace_run_id=" << trace.run_id() << " uploaded=" << uploaded
+                << " dropped=" << trace.status().dropped_events << "\n";
+      if (!uploaded) return 1;
+    }
+#endif
     return 0;
   } catch (const std::exception& error) {
     std::cerr << "real Hush probe failed: " << error.what() << "\n";
