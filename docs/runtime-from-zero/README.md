@@ -69,14 +69,13 @@ cmake --build build-app -j4 --target mini_runtime_demo mini_runtime_tests
 ctest --test-dir build-app -R '^mini_runtime_tests$' --output-on-failure
 ```
 
-这组命令会使用已有的 `build-app` 配置。初次配置时如果缺少模型 bundle，CMake 可能提示 App 未内置模型；这不影响以上两个入门目标。课程中的真实模型测试另有依赖，不要把跳过模型测试当作已经执行。
+这组命令会创建或更新 `build-app` 配置。初次配置时如果缺少模型 bundle，CMake 可能提示 App 未内置模型；这不影响以上两个入门目标。课程中的真实模型测试另有依赖，不要把跳过模型测试当作已经执行。
 
 ## 资料之间如何对应
 
 - 本目录解释当前实现，是现在的主阅读入口。
-- [早期源码阅读指南](../source-reading-guide.md) 可以补充最小 CPU 部分的细节。
-- [原学习路线图](../runtime-learning-roadmap.md) 包含未来方向，不能当作已实现功能清单。
 - [Hush 音频验收](../hush-audio-validation.md) 记录参考对照、测试方法与音质边界。
+- [Hush App 真实运行事件](../hush-influx-trace.md) 说明事件采集、后台上传、网页回放和非阻塞自测。
 - [Runtime 落地复盘](../runtime-implementation-retrospective.md) 记录实现过程中遇到的难题、错误判断、修复方法和仍未完成的部分。
 
 阅读时遇到疑问，尽量具体到“哪个对象、哪个函数、哪一组输入”。例如：“`out` 为什么是 16 字节？”比“内存我都不懂”更容易一步步弄清楚。

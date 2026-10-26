@@ -280,15 +280,12 @@ ctest --test-dir build-app --output-on-failure
 
 - [从 0 到 1 源码课程：8 课与完整源码地图](./docs/runtime-from-zero/README.md)
 - [Runtime 落地问题复盘：现象、根因、修复和边界](./docs/runtime-implementation-retrospective.md)
-- [Runtime 学习路线图](./docs/runtime-learning-roadmap.md)
-- [第 1 周任务清单](./docs/week-1-task-checklist.md)
-- [源码阅读 Guide](./docs/source-reading-guide.md)
-
-前两份路线与任务清单保留了早期学习规划，包括尚未实现的 KV Cache 等方向。当前实现与函数调用以新源码课程为主；早期源码 Guide 可补充最小 CPU 部分的细节。
+- [Hush 音频一致性验收：参考对照、自测与音质边界](./docs/hush-audio-validation.md)
+- [Hush App 真实运行事件：采集、上传与回放自测](./docs/hush-influx-trace.md)
 
 ## 当前最值得做的下一步
 
-学习时先从课程第 1 课跟踪两节点 demo，再依次阅读 Tensor/内存、CPU 算子、ONNX、Metal、Hush 与 App。工程继续演进时，应优先核对 Tensor 访问边界、基础 GRU 语义、ONNX 兼容范围和 CPU/GPU 调度，再扩展新模型。Mul 已实现，无需按旧任务清单重复开发。
+学习时先从课程第 1 课跟踪两节点 demo，再依次阅读 Tensor/内存、CPU 算子、ONNX、Metal、Hush 与 App。工程继续演进时，应优先核对 Tensor 访问边界、基础 GRU 语义、ONNX 兼容范围和 CPU/GPU 调度，再扩展新模型。
 
 ## Hush Metal 移植阶段自测
 

@@ -67,7 +67,7 @@ HUSH_MODEL_BUNDLE="$PWD/build-app/models/hush-real-model.tar.gz" \
 | 原始 / 修复前 / 修复后 RMS | `0.01673 / 0.00338 / 0.01466` |
 | 内存压力测试 | 512 次逐帧及 128 次 32 帧批处理通过，约 `22–26 MiB` |
 
-App 验收还需要检查 `Play Raw Mic`、`Play Bypass` 和 `Play Hush` 的播放时长相同。开始新的麦克风会话时重置流状态，避免沿用上一次采集的历史。
+App 验收还需要检查 `Play Raw Mic` 和 `Play Hush` 的播放时长相同。开始新的麦克风会话时重置流状态，避免沿用上一次采集的历史。
 
 App 内的 `Generate Background Voice Demo` 现在使用两段独立中文语音。默认混音为主讲人高于背景人声 `18 dB`，还可以选择 `24/12/3/0 dB`；生成后依次播放 `Play Mixed Input` 和 `Play Enhanced Output`。主讲参考仍写入 `/tmp`，用于诊断工具。
 
