@@ -237,6 +237,8 @@ INFLUXDB_TOKEN=mini-runtime-local-token \
 
 线上页面现在以“真实推理回放”为主：选择一次 Hush Run，再选择一个 1 帧或 32 帧调用。回放会同步驱动输入/前端/Encoder/两个 decoder/mask/deep-filter/ISTFT/状态流程图、当前 Tensor 契约、实际设备和阶段耗时；只在收到事件的地方显示实测值，未采集阶段保留源码契约并明确标记。
 
+零基础数学与 GPU 动画课程：`http://81.71.150.26/tutorial.html`。课程用本地教学数字逐步演示采样、Tensor、复数、窗口、DFT、ERB、归一化、MatMul、Conv、激活、GRU、Mask、Deep Filter、ISTFT、状态、Metal 线程和三类验收指标。
+
 Hush 的 `hush_mic_ui.app` 也会为麦克风实时处理、录音 A/B 处理和背景人声演示创建独立 Run ID。点击 App 中的 `Open Trace`，或在页面 URL 后追加 `?run=<Run ID>`，即可查看该次测试的真实阶段事件。事件只包含阶段、节点、shape、字节数和耗时，不上传录音内容。
 
 App 里点击 `Generate Background Voice Demo` 或开始/停止 `Record A/B Test` 后，等待状态栏显示 `synced`，再点击 `Open Trace`。如果只想本地运行并关闭上传，可设置 `HUSH_TRACE_ENABLED=0` 后启动 App。

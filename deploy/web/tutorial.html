@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="从零学习 Hush 与推理 Runtime：18 课，交互动画、逐项计算、公式释义、CPU / Metal 与源码对照。">
+  <title>一段声音的数学旅行 · Hush 动画课堂</title>
+  <link rel="stylesheet" href="/tutorial.css?v=20261026-1">
+</head>
+<body>
+<main class="course">
+  <header class="masthead">
+    <a href="/" class="brand">HUSH / RUNTIME LAB</a>
+    <a href="/">打开真实推理回放 ↗</a>
+  </header>
+  <section class="intro">
+    <div>
+      <p class="eyebrow">给第一次接触音频与 GPU 的你</p>
+      <h1>一段声音的<br><span>数学旅行。</span></h1>
+      <p class="intro-copy">从麦克风里的一串数字，走到频谱、神经网络和 GPU 线程。每次只学一个原理，亲手拨动参数，看答案怎样算出来。</p>
+    </div>
+    <div class="route" aria-label="课程主线">
+      <span>01 / 听见数字</span><i>↓</i><span>02 / 学会乘加</span><i>↓</i><span>03 / 理解增强</span><i>↓</i><span>04 / 走进 GPU</span>
+    </div>
+  </section>
+  <div class="course-info">
+    <span>18 节短课 · 零基础起步 · 每课可单步演算</span>
+    <span id="progress">已读 0 / 18</span>
+  </div>
+  <details class="lesson-menu" id="lessonMenu" open>
+    <summary>课程目录 <span>点任意一课开始</span></summary>
+    <nav id="chapters" aria-label="选择课程"></nav>
+  </details>
+
+  <section class="lesson" id="lesson">
+    <header class="lesson-heading">
+      <div><p class="eyebrow" id="lessonNumber"></p><h2 id="lessonTitle"></h2></div>
+      <span class="tag" id="lessonLocation"></span>
+    </header>
+    <p class="question" id="lessonQuestion"></p>
+    <div class="stage">
+      <div class="stage-head"><span id="sceneTitle"></span><span class="tag">教学数字 · 浏览器本地计算</span></div>
+      <canvas id="animation" role="img" aria-label="数学计算动画">请启用 Canvas，查看逐项计算动画。所有公式和解释仍可阅读。</canvas>
+      <output id="sceneResult" aria-live="polite"></output>
+      <div class="animation-controls">
+        <button class="primary" id="play" type="button">▶ 播放动画</button>
+        <button id="step" type="button">一步计算 →</button>
+        <button id="restart" type="button">重演</button>
+        <label class="speed">速度 <select id="speed"><option value="1800">慢慢看</option><option value="1050" selected>正常</option><option value="500">快一点</option></select></label>
+        <span id="stepCount" class="count"></span>
+      </div>
+      <div class="parameter-controls" id="parameters"></div>
+    </div>
+
+    <div class="reading-grid">
+      <article class="explain">
+        <p class="section-label">把它想成</p>
+        <p class="analogy" id="analogy"></p>
+        <p id="explanation"></p>
+        <div class="walkthrough" id="walkthrough"></div>
+        <div class="takeaway"><span>这一课记住</span><p id="takeaway"></p></div>
+      </article>
+      <aside class="math">
+        <p class="section-label">现在再看公式</p>
+        <div class="equations" id="equations"></div>
+        <dl id="symbols"></dl>
+      </aside>
+    </div>
+
+    <section class="implementation">
+      <div><p class="section-label">回到你的 runtime</p><p id="implementation"></p></div>
+      <div class="sources" id="sources"></div>
+    </section>
+    <section class="quiz">
+      <p class="section-label">停一下，自己想想</p>
+      <h3 id="quizQuestion"></h3>
+      <div id="quizOptions"></div>
+      <p id="quizFeedback" role="status"></p>
+    </section>
+    <div class="lesson-navigation">
+      <button id="previousLesson" type="button">← 上一课</button><span id="lessonPosition"></span><button class="primary" id="nextLesson" type="button">下一课 →</button>
+    </div>
+  </section>
+
+  <details class="reference">
+    <summary>完整公式地图 / 复习小抄</summary>
+    <div id="formulaIndex"></div>
+  </details>
+  <footer>
+    <p>本教程覆盖当前 Hush 音频链路及 runtime 中的核心数学。小矩阵、波形和权重是教学例子，不是从麦克风或模型导出的隐私数据；这里不运行 Hush ONNX，也不上传任何输入。</p>
+    <p>按源码区分 CPU 与 Metal；前端、Mask / DF 和合成当前在 CPU。真实执行时间与设备请查看 <a href="/">推理回放</a>。数值对齐不等于模型在所有场景下都能保留主讲人。</p>
+  </footer>
+  <noscript><p>请启用 JavaScript，加载课程、公式和交互动画。</p></noscript>
+</main>
+<script src="/tutorial-math.js?v=20261026-1"></script>
+<script src="/tutorial-lessons.js?v=20261026-1"></script>
+<script src="/tutorial.js?v=20261026-1"></script>
+</body>
+</html>
