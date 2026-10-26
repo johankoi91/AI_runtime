@@ -1,0 +1,9 @@
+services:
+  web:
+    image: hub.agoralab.co/rtm/nginx:1.16.0
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./dist:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro

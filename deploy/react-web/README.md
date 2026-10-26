@@ -25,6 +25,8 @@ npm run preview
 
 构建结果位于 `dist/`，不会覆盖 `deploy/web`，也不会修改现有 Docker/Nginx 配置。部署时可以把 `dist/` 作为新的静态站点根目录，并按现有服务配置 `/influx/` 反向代理。
 
+`nginx.conf` 和 `docker-compose.production.yml` 是新站点的独立部署模板：它们只挂载 `dist/`，并保留 `/influx/` 代理。
+
 `src/lib/` 中的 Trace 解析、课程数据和教学数学实现是当前页面的只读副本；修改新站点时应只改本目录，保留旧站点作为可回退基线。
 
 ## 测试
