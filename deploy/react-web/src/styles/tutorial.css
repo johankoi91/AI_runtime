@@ -85,6 +85,11 @@ summary { cursor: pointer; }
 .variable-row:first-of-type { border-top: 0; }
 .variable-row code { color: var(--amber); font: 12px/1.55 ui-monospace, monospace; overflow-wrap: anywhere; }
 .variable-row span { color: #d5e2e0; }
+.purpose-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 14px; padding: 11px 12px; border: 1px solid #5d5132; border-radius: 7px; background: linear-gradient(135deg, #292419, #18201d); }
+.purpose-grid > .variable-dictionary-title { grid-column: 1 / -1; margin-bottom: 0; color: var(--amber); }
+.purpose-grid article { padding: 10px; border: 1px solid #594a2d; border-radius: 6px; background: #211e18; }
+.purpose-grid strong { display: block; color: var(--amber); font-size: 12px; margin-bottom: 4px; }
+.purpose-grid p { color: #e0ddd0; font-size: 12px; line-height: 1.7; }
 .formula-example, .animation-note { display: grid; grid-template-columns: 105px 1fr; gap: 12px; align-items: start; margin-top: 12px; padding: 10px 12px; border-radius: 6px; font-size: 12px; line-height: 1.7; }
 .formula-example { background: #272419; border-left: 2px solid var(--amber); }
 .animation-note { background: #102b2d; border-left: 2px solid var(--blue); }
@@ -164,6 +169,8 @@ footer p + p { margin-top: 8px; }
   .formula-parts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .formula-parts article { min-height: 125px; }
   .variable-row { grid-template-columns: 1fr; gap: 1px; }
+  .purpose-grid { grid-template-columns: 1fr; }
+  .purpose-grid > .variable-dictionary-title { grid-column: auto; }
   .formula-example, .animation-note { grid-template-columns: 1fr; gap: 2px; }
   .sampling-mini-title, .sampling-mini-caption { font-size: 10px; }
   .reading-grid { padding-block: 24px; }

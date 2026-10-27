@@ -59,6 +59,13 @@ test("every lesson has a complete formula guide for the detailed React tutorial"
   }
 });
 
+test("the sampling lesson explains formula purpose and engineering function", () => {
+  assert.equal(guidance.sound.purpose.length, 4);
+  assert.ok(guidance.sound.purpose.some(item => item.title.includes("÷20")));
+  assert.ok(guidance.sound.purpose.some(item => item.title.includes("RMS")));
+  assert.ok(guidance.sound.purpose.some(item => item.title.includes("Hush")));
+});
+
 test("every lesson explains the variables used in its equations", () => {
   assert.equal(Object.keys(variableGlossary).length, lessons.length);
   for (const lesson of lessons) {
