@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from "react";
 import { UiButton } from "../components/ui.jsx";
 import { mixingCalculation, rmsCalculation, teachingSamples } from "./sound-derivation-math.js";
+import { SoundIntuition } from "./SoundIntuition.jsx";
 import "../styles/sound-derivation.css";
 
 const tabs = ["① 从四个数字认识 RMS", "② 一步步推出 ÷20", "③ 代入 12 dB 并验算"];
@@ -79,7 +80,10 @@ export function SoundDerivation({ sirDb, onSirChange, onPauseMain }) {
     ["D", "目标SIR，单位dB；当前是" + sirDb + " dB"], ["Pₛ / Pᵦ", "主讲/缩放后背景的平均功率指标之比"], ["Rₛ / Rᵦ", "主讲/缩放后背景的RMS之比"], ["Rᵥ / a", "Rᵥ是背景源原始RMS；a是要算的正增益"], ["log₁₀ / 10ᵘ", "以10为底的对数/指数，二者互为逆运算"], ["s / v / b", "下标分别表示主讲/原背景/缩放后背景"]
   ];
 
-  return <section className="sound-derivation" id="sound-derivation" aria-labelledby={`${prefix}-heading`}>
+  return <section className="sound-derivation" id="sound-derivation" aria-label="RMS与背景增益的图形实验">
+    <SoundIntuition sirDb={sirDb} onSirChange={onSirChange} onPauseMain={onPauseMain} />
+    <details className="derivation-full-proof" onToggle={event => { if (!event.currentTarget.open) setPlaying(false); }}>
+    <summary>理解图形后，再展开完整字母推导、变量解释与双路线验算</summary>
     <div className="derivation-heading"><div><p className="section-label">第一课 · 从头推导，不跳步骤</p><h3 id={`${prefix}-heading`}>先有要解决的问题，才有这两个公式。</h3><p>先算四个数字，再看功率与幅度，最后反解背景增益。</p></div><span className="tag">约 5 分钟 · 可单步</span></div>
     <div className="derivation-tabs" role="tablist" aria-label="选择推导主题">{tabs.map((title, index) => <UiButton key={title} role="tab" id={`${prefix}-tab-${index}`} aria-selected={tab === index} aria-controls={`${prefix}-panel-${index}`} tabIndex={tab === index ? 0 : -1} onClick={() => chooseTab(index)} onKeyDown={event => {
       const next = event.key === "ArrowRight" ? (index + 1) % tabs.length : event.key === "ArrowLeft" ? (index + tabs.length - 1) % tabs.length : event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : null;
@@ -126,5 +130,6 @@ export function SoundDerivation({ sirDb, onSirChange, onPauseMain }) {
       </>}
       <div className="derivation-topic-navigation">{tab > 0 && <UiButton onClick={() => chooseTab(tab - 1)}>← 返回上一部分</UiButton>}{tab < 2 && <UiButton className="primary" onClick={() => chooseTab(tab + 1)}>{tab === 0 ? "我理解RMS了，接着看20从哪来 →" : "代入12 dB，亲手验算 →"}</UiButton>}</div>
     </div>
+    </details>
   </section>;
 }

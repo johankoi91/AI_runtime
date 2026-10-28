@@ -18,6 +18,16 @@ test("doubling amplitude quadruples mean-square and doubles RMS", () => {
   assert.equal(scaled.rms, original.rms * 2);
 });
 
+test("uneven sample areas redistribute without changing total mean-square strength", () => {
+  const result = rmsCalculation([1, -3, 3, -1]);
+  assert.equal(result.mean, 0);
+  assert.deepEqual(result.squares, [1, 9, 9, 1]);
+  assert.equal(result.squareSum, 20);
+  assert.equal(result.meanSquare, 5);
+  assert.ok(Math.abs(result.rms - 2.23606797749979) < 1e-14);
+  assert.ok(Math.abs(result.rms ** 2 * result.samples.length - result.squareSum) < 1e-13);
+});
+
 test("repeating the same samples changes total energy indicator but not RMS", () => {
   const original = rmsCalculation(teachingSamples);
   const repeated = rmsCalculation(teachingSamples.concat(teachingSamples));
