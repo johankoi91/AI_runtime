@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import lessons from "../src/lib/tutorial-lessons.js";
+import lessons from "../src/lib/curriculum.js";
 import { getFrameCount } from "../src/tutorial/canvas-engine.js";
 import { createTutorialState, tutorialReducer } from "../src/tutorial/tutorial-state.js";
 

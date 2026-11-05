@@ -11,7 +11,7 @@
 | 零基础读懂源码 | [从 0 到 1：8 课源码课程](docs/runtime-from-zero/README.md) |
 | 在 Mac 上体验录音与处理效果 | [运行 macOS App](#运行-macos-app) |
 | 查看真实推理事件 | [推理回放页面](http://81.71.150.26/) |
-| 学习数学公式和 GPU 计算 | [18 节动画教程](http://81.71.150.26/tutorial.html) |
+| 学习数学公式和 GPU 计算 | [7 个阶段、26 节交互教程](http://81.71.150.26/tutorial.html) |
 | 了解开发中踩过的坑 | [Runtime 落地复盘](docs/runtime-implementation-retrospective.md) |
 
 ## 当前实现
@@ -174,7 +174,7 @@ HUSH_MODEL_BUNDLE="$PWD/build-app/models/hush-real-model.tar.gz" \
 ## 真实推理回放与数学动画
 
 - [真实推理回放](http://81.71.150.26/)：按 Run ID 查看 App 上报的输入、前端、三张图、频谱增强、重建和状态事件。
-- [数学与 GPU 动画教程](http://81.71.150.26/tutorial.html)：18 节交互课程，用教学数据解释公式与计算机制。
+- [数学与 GPU 动画教程](http://81.71.150.26/tutorial.html)：按比例、分贝、矩阵、波形、频谱、Hush、runtime排列的7个阶段、26节课。每课按问题、实验、公式、工程应用展开，包含符号解释、数值示例与完成进度。
 
 在 App 中完成录音 A/B 或背景人声演示后，等待 Trace 显示 `synced`，点击 `Open Trace` 可定位本次测试。回放页面也支持 `?run=<Run ID>`；数学教程中的演示数字与动画不代表真实 GPU 性能采样。
 

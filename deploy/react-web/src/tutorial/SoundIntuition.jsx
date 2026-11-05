@@ -61,9 +61,9 @@ function Checkpoint({ question, choices, correct, explanation }) {
   return <div className="intuition-checkpoint"><strong>{question}</strong><div>{choices.map((choice, index) => <UiButton key={choice} aria-pressed={answer === index} onClick={() => setAnswer(index)}>{choice}</UiButton>)}</div>{answer !== null && <p role="status">{answer === correct ? "对，" : "再看一下，"}{explanation}</p>}</div>;
 }
 
-export function SoundIntuition({ sirDb, onSirChange, onPauseMain }) {
+export function SoundIntuition({ sirDb, onSirChange, onPauseMain, focusTopic = null }) {
   const prefix = useId();
-  const [topic, setTopic] = useState(0);
+  const [topic, setTopic] = useState(focusTopic ?? 0);
   const [recording, setRecording] = useState(0);
   const [rmsScene, setRmsScene] = useState(0);
   const [dbScene, setDbScene] = useState(0);
@@ -114,12 +114,12 @@ export function SoundIntuition({ sirDb, onSirChange, onPauseMain }) {
   }
 
   return <div className="sound-intuition" id="sound-intuition">
-    <div className="intuition-intro"><span>先做实验，再认识字母</span><h3>蓝色看边长，黄色看面积。</h3><p>把“声音强弱”变成能看见的图形。一次只做一个动作，最后再把动作写成公式。</p></div>
-    <div className="intuition-tabs" role="tablist" aria-label="直觉实验">{topics.map((label, index) => <UiButton key={label} role="tab" id={`${prefix}-tab-${index}`} aria-controls={`${prefix}-panel-${index}`} aria-selected={topic === index} tabIndex={topic === index ? 0 : -1} onClick={() => chooseTopic(index)} onKeyDown={event => {
+    <div className="intuition-intro"><span>先做实验，再认识字母</span><h3 id={`${prefix}-title`}>蓝色看边长，黄色看面积。</h3><p>把“声音强弱”变成能看见的图形。一次只做一个动作，最后再把动作写成公式。</p></div>
+    {focusTopic === null && <div className="intuition-tabs" role="tablist" aria-label="直觉实验">{topics.map((label, index) => <UiButton key={label} role="tab" id={`${prefix}-tab-${index}`} aria-controls={`${prefix}-panel-${index}`} aria-selected={topic === index} tabIndex={topic === index ? 0 : -1} onClick={() => chooseTopic(index)} onKeyDown={event => {
       const next = event.key === "ArrowRight" ? (index + 1) % topics.length : event.key === "ArrowLeft" ? (index + topics.length - 1) % topics.length : event.key === "Home" ? 0 : event.key === "End" ? topics.length - 1 : null;
       if (next !== null) { event.preventDefault(); chooseTopic(next); document.getElementById(`${prefix}-tab-${next}`)?.focus(); }
-    }}>{label}</UiButton>)}</div>
-    <div className="intuition-panel" role="tabpanel" id={`${prefix}-panel-${topic}`} aria-labelledby={`${prefix}-tab-${topic}`} tabIndex={0}>
+    }}>{label}</UiButton>)}</div>}
+    <div className="intuition-panel" role={focusTopic === null ? "tabpanel" : "region"} id={`${prefix}-panel-${topic}`} aria-labelledby={focusTopic === null ? `${prefix}-tab-${topic}` : `${prefix}-title`} tabIndex={0}>
       {topic !== 1 && <ol className="intuition-stepper" aria-label="实验步骤">{(topic === 0 ? ["看摆动", "画面积", "平均分", "找边长"] : ["翻译刻度", "求背景面积", "找振幅边长", "写成公式"]).map((label, index) => <li key={label}><UiButton aria-current={scene === index ? "step" : undefined} onClick={() => chooseScene(index)}><span>{index + 1}</span>{label}</UiButton></li>)}</ol>}
       <div className="intuition-title"><span>{topic === 1 ? "亲手拖动" : `镜头 ${scene + 1} / 4`}</span><h4>{topic === 1 ? "背景振幅减半，功率会减到多少？" : title}</h4></div>
       <p className="intuition-explain">{topic === 1 ? "主讲固定为1，背景原本也为1。拖动旋钮，让背景波形和正方形一起缩小；观察蓝色边长和黄色面积变化的速度。" : explanation}</p>
@@ -164,12 +164,12 @@ export function SoundIntuition({ sirDb, onSirChange, onPauseMain }) {
           {dbScene >= 1 && <article className={dbScene === 1 ? "active" : ""}><span>② 背景面积</span><code>1 ÷ {number(mix.powerRatio, 6)}</code><b>≈ {number(mix.backgroundPower, 6)}</b></article>}
           {dbScene >= 2 && <article className={dbScene === 2 ? "active" : ""}><span>③ 背景边长</span><code>√{number(mix.backgroundPower, 6)}</code><b>≈ {number(mix.amplitudeRatio, 6)}</b></article>}
         </div>
-        {dbScene === 3 && <div className="intuition-formula-reveal"><h5>把上面三个动作，接成同一句：</h5><div><code>a = √(1 / 10^(D/10))</code><p><b>a</b>是背景样本要乘的数；<b>D</b>是希望达到的SIR，单位dB。1除以功率倍数，再开根号。</p></div><div><code>= √(10^(−D/10))</code><p><b>负号</b>：1除以10的某次方，就等于10的负次方。例如1/10²=10⁻²=0.01。</p></div><div><code>= 10^(−D/20)</code><p><b>20的由来</b>：开根号把指数减半。−D÷10再除以2，就是−D÷20。例如√(10⁻²)=√0.01=0.1=10⁻¹。</p></div><p>本次代入：a=10^(−{sirDb}/20)≈{number(mix.gain, 6)}。D越大，背景允许留下的面积越小，边长也越小。</p><p className="intuition-assumption">两源RMS不相等时，要先校正强弱：a=(Rₛ/Rᵥ)×10^(−D/20)。Rₛ是主讲RMS，Rᵥ是背景缩放前RMS。下方完整推导可以切换验证。</p></div>}
+        {dbScene === 3 && <div className="intuition-formula-reveal"><h5>把上面三个动作，接成同一句：</h5><div><code>a = √(1 / 10^(D/10))</code><p><b>a</b>是背景样本要乘的数；<b>D</b>是希望达到的SIR，单位dB。1除以功率倍数，再开根号。</p></div><div><code>= √(10^(−D/10))</code><p><b>负号</b>：1除以10的某次方，就等于10的负次方。例如1/10²=10⁻²=0.01。</p></div><div><code>= 10^(−D/20)</code><p><b>20的由来</b>：开根号把指数减半。−D÷10再除以2，就是−D÷20。例如√(10⁻²)=√0.01=0.1=10⁻¹。</p></div><p>本次代入：a=10^(−{sirDb}/20)≈{number(mix.gain, 6)}。D越大，背景允许留下的面积越小，边长也越小。</p><p className="intuition-assumption">两源RMS不相等时，要先校正强弱：a=(Rₛ/Rᵥ)×10^(−D/20)。Rₛ是主讲RMS，Rᵥ是背景缩放前RMS。{focusTopic === null ? "下方完整推导可以切换验证。" : "例如主讲RMS为1、原背景为2，12 dB时a≈0.125594，处理后背景RMS仍约0.251189。"}</p></div>}
         {dbScene === 3 && <Checkpoint question="这里除以20，是哪两步合在一起？" choices={["分贝尺除以10，再开根号", "固定把背景降低20倍"]} correct={0} explanation="分贝尺先给出功率比例；开根号把功率比例变成振幅比例，指数也随之减半。" />}
       </>}
 
       {topic !== 1 && <div className="intuition-playback"><UiButton onClick={() => { onPauseMain(); if (scene === 3) { if (topic === 0) setRmsScene(0); else setDbScene(0); } setPlaying(!playing); }}>{playing ? "暂停演示" : "自动演示（每镜头7秒）"}</UiButton><UiButton disabled={scene === 0} onClick={() => chooseScene(scene - 1)}>← 上一镜头</UiButton><UiButton className="primary" disabled={scene === 3} onClick={() => chooseScene(scene + 1)}>下一镜头 →</UiButton></div>}
-      <div className="intuition-next-topic">{topic < 2 && <UiButton className="primary" onClick={() => chooseTopic(topic + 1)}>{topic === 0 ? "接着拧一拧背景音量 →" : "反过来：给12 dB，怎么算旋钮位置？ →"}</UiButton>}</div>
+      <div className="intuition-next-topic">{focusTopic === null && topic < 2 && <UiButton className="primary" onClick={() => chooseTopic(topic + 1)}>{topic === 0 ? "接着拧一拧背景音量 →" : "反过来：给12 dB，怎么算旋钮位置？ →"}</UiButton>}</div>
       <p className="intuition-caption">图形展示真实计算的相对比例；正方形面积是平方指标的画法。这里使用教学数字，不采集音频，也不运行Hush。背景系数用于准备测试混音，不是模型内部的增强强度。</p>
     </div>
   </div>;
