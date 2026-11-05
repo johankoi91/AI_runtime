@@ -18,7 +18,7 @@ const rmsScenes = [
 const dbScenes = [
   ["先把“dB 刻度”翻译成“功率倍数”", "分贝是一把压缩过的比例尺：功率比每乘10，刻度就加10 dB。下面的平方和比例都使用相同测量条件。"],
   ["主讲当作 1，背景应该留多少面积？", "SIR比较的是主讲除以背景。已知主讲是1，就把1除以刚才的倍数，得到背景允许留下的功率比例。"],
-  ["音频乘的是边长，所以再开一次根号", "黄色面积代表功率比例，蓝色边长代表振幅比例。找到黄色正方形的边长，就是背景每个采样要乘的数。"],
+  ["为什么开根号，就得到了振幅比例？", "功率比例是振幅比例的平方。开根号是在反问：哪个非负数乘自己，等于这个功率比例？先用0.8变成0.4的例子，亲手算清这层关系。"],
   ["公式，只是把刚才的三步写短", "现在再把具体的dB数值换成字母D。你已经算过这条公式，字母只是为了让同一个做法适用于别的数。"]
 ];
 
@@ -59,6 +59,20 @@ function MixingWaves({ gain }) {
 function Checkpoint({ question, choices, correct, explanation }) {
   const [answer, setAnswer] = useState(null);
   return <div className="intuition-checkpoint"><strong>{question}</strong><div>{choices.map((choice, index) => <UiButton key={choice} aria-pressed={answer === index} onClick={() => setAnswer(index)}>{choice}</UiButton>)}</div>{answer !== null && <p role="status">{answer === correct ? "对，" : "再看一下，"}{explanation}</p>}</div>;
+}
+
+function PowerAmplitudeBridge({ mix, sirDb, onInteract }) {
+  const [reverse, setReverse] = useState(false);
+  return <section className="power-root-bridge" aria-label="功率比例为什么要开根号">
+    <header><span>先用最简单的数字，补上中间这一步</span><h5>振幅乘0.5，功率为什么只剩0.25？</h5></header>
+    <p>音频采样表示振幅。计算相对功率指标时，要先把采样平方。先看同一段背景缩放前后的一个采样：</p>
+    <table><caption>0.8 → 0.4：振幅与平方指标一起比较</caption><thead><tr><th scope="col">操作</th><th scope="col">采样振幅</th><th scope="col">平方后的指标</th></tr></thead><tbody><tr><th scope="row">原来</th><td>0.8</td><td>0.8² = 0.64</td></tr><tr><th scope="row">振幅减半</th><td>0.4</td><td>0.4² = 0.16</td></tr></tbody></table>
+    <div className="power-root-directions" aria-label="切换计算方向"><UiButton aria-pressed={!reverse} onClick={() => { setReverse(false); onInteract(); }}>① 正着算：振幅 → 功率</UiButton><UiButton aria-pressed={reverse} onClick={() => { setReverse(true); onInteract(); }}>② 倒着找：功率 → 振幅</UiButton></div>
+    <div className="power-root-calculation" aria-live="polite">{reverse ? <><strong>已知功率比例0.25，振幅应该留多少？</strong><p>问：哪个非负数乘自己，等于0.25？</p><code>0.5 × 0.5 = 0.25</code><p>所以答案是0.5。这种“从平方结果找回原来的数”的操作，就叫开平方根：</p><code>振幅比例 = √0.25 = 0.5</code></> : <><strong>先分别比较前后的比例</strong><code>振幅比例 = 0.4 ÷ 0.8 = 0.5</code><code>功率比例 = 0.16 ÷ 0.64 = 0.25</code><p>振幅留下了一半，功率只留下四分之一，因为：</p><code>0.5 × 0.5 = 0.25</code></>}</div>
+    <div className="power-root-rule"><strong>把两种方向连起来</strong><code>功率比例 = 振幅比例 × 振幅比例</code><code>振幅比例 = √功率比例</code><p>对整段声音，每个采样都乘同一个系数，所有平方值及其平均值就都乘这个系数的平方。所以这层关系也适用于整段信号的有效振幅（RMS）之比。</p></div>
+    <div className="power-root-current"><strong>现在回到当前的 {sirDb} dB</strong><p>前一步算出的背景/主讲功率比例是 {number(mix.backgroundPower, 6)}。反过来找振幅比例：</p><code>√{number(mix.backgroundPower, 6)} ≈ {number(mix.amplitudeRatio, 6)}</code><p>背景有效振幅约为主讲的 {number(mix.amplitudeRatio * 100, 1)}%。两源原始RMS相等时，把背景每个采样乘 {number(mix.gain, 6)}，就能达到这个比例。</p></div>
+    <details className="power-root-physics"><summary>为什么音频功率采用平方关系？</summary><p>在相同测量条件下，声波功率与声压振幅的平方成正比；数字音频用采样的均方值作为相对功率指标。这里的0.64、0.16是平方指标，没有校准为瓦特。正方形面积只是帮助看懂这个平方关系。</p></details>
+  </section>;
 }
 
 export function SoundIntuition({ sirDb, onSirChange, onPauseMain, focusTopic = null }) {
@@ -158,6 +172,7 @@ export function SoundIntuition({ sirDb, onSirChange, onPauseMain, focusTopic = n
         <label className="intuition-gain" htmlFor={`${prefix}-db`}>想让主讲比背景强 <strong>{sirDb} dB</strong><input id={`${prefix}-db`} type="range" min="0" max="24" step="3" value={sirDb} onChange={event => changeSir(Number(event.target.value))} /></label>
         <div className="intuition-presets">{[0, 6, 12, 24].map(value => <UiButton key={value} aria-pressed={sirDb === value} onClick={() => changeSir(value)}>{value} dB</UiButton>)}</div>
         {dbScene === 0 && <div className="intuition-decibel-ruler"><strong>分贝，是给“功率倍数”换一套刻度</strong><div>{[[0, 1], [10, 10], [20, 100], [30, 1000]].map(([decibels, ratio]) => <article key={decibels}><b>{decibels} dB</b><span>↕</span><b>{ratio}倍</b></article>)}</div><p>每往右一格：上面加10，下面乘10。当前{sirDb} dB对应约{number(mix.powerRatio, 4)}倍。</p><details><summary>10 的几次方，是什么意思？</summary><p>10¹=10，10²=10×10=100。指数也可以有小数：10^1.2≈15.849，位于10与100之间。把{sirDb} dB除以10，就是这把尺上的指数{number(sirDb / 10)}。</p><p>反过来问“10的几次方等于这个倍数”，就是log₁₀。分贝对功率比的定义是：D=10×log₁₀(主讲功率/背景功率)。D是以dB表示的SIR；前面的10是刻度定义。</p></details></div>}
+        {dbScene === 2 && <PowerAmplitudeBridge mix={mix} sirDb={sirDb} onInteract={() => { setPlaying(false); onPauseMain(); }} />}
         {dbScene > 0 && <div className="intuition-comparison"><AreaSquare side={1} maximum={1} label="主讲：功率指标 1" tone="blue" /><AreaSquare side={mix.amplitudeRatio} maximum={1} label={`背景：面积 ${number(mix.backgroundPower, 6)}`} detail={dbScene >= 2 ? `边长≈${number(mix.amplitudeRatio, 6)}` : "下一镜头：从面积找边长"} showSide={dbScene >= 2} /><div className="intuition-power-result"><span>{dbScene === 1 ? "背景应留的功率比例" : "背景每个采样乘"}</span><strong>{number(dbScene === 1 ? mix.backgroundPower : mix.amplitudeRatio, 6)}</strong>{dbScene >= 2 && <p>振幅约 {number(mix.amplitudeRatio * 100, 1)}%</p>}<p>功率约 {number(mix.backgroundPower * 100, 2)}%</p></div></div>}
         <div className="intuition-number-trail" aria-label="本次计算路线">
           <article className={dbScene === 0 ? "active" : ""}><span>① 刻度 → 功率倍数</span><code>10^({sirDb} ÷ 10)</code><b>= {number(mix.powerRatio, 6)}</b></article>

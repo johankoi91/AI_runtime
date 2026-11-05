@@ -107,7 +107,29 @@
 .intuition-caption { color: var(--muted); font-size: 11px; line-height: 1.8; margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--line); }
 .derivation-full-proof { border-top: 1px solid #3d5650; }
 .derivation-full-proof > summary { padding: 18px 25px; color: var(--blue); font-size: 13px; cursor: pointer; line-height: 1.8; }
+.power-root-bridge { margin: 22px 0; padding: 21px; border: 1px solid #6c7050; border-radius: 9px; background: linear-gradient(145deg, #26352b, #11252d 80%); }
+.power-root-bridge header > span { color: var(--amber); font-size: 11px; }
+.power-root-bridge h5 { color: var(--text); font-size: 20px; line-height: 1.6; margin: 8px 0 12px; }
+.power-root-bridge p { color: #cadbd6; font-size: 13px; line-height: 1.9; margin: 8px 0; }
+.power-root-bridge table { width: 100%; margin: 16px 0; table-layout: fixed; border-collapse: collapse; font-size: 13px; }
+.power-root-bridge caption { text-align: left; color: var(--muted); font-size: 11px; margin-bottom: 8px; }
+.power-root-bridge th, .power-root-bridge td { text-align: left; padding: 12px 10px; border: 1px solid #3e5758; overflow-wrap: anywhere; }
+.power-root-bridge thead { background: #213c3c; color: var(--blue); }
+.power-root-bridge tbody th { font-weight: 500; color: #ccded8; }
+.power-root-bridge td { color: var(--amber); font-family: ui-monospace, monospace; }
+.power-root-directions { display: flex; gap: 9px; flex-wrap: wrap; margin: 18px 0 12px; }
+.power-root-directions button { flex: 1; font-size: 12px; }
+.power-root-calculation, .power-root-rule, .power-root-current { background: #10242a; padding: 17px; border: 1px solid #35544b; border-radius: 7px; margin-top: 12px; }
+.power-root-bridge strong { display: block; color: var(--green); font-size: 13px; line-height: 1.8; }
+.power-root-bridge code { display: block; color: #ecdfb7; font: clamp(13px, 1.7vw, 18px)/1.9 ui-monospace, monospace; margin: 8px 0; overflow-wrap: anywhere; }
+.power-root-current { background: #1a372e; border-color: #5c8065; }
+.power-root-physics { margin-top: 16px; font-size: 12px; }
 @media (max-width: 700px) {
+  .power-root-bridge { padding: 16px 12px; }
+  .power-root-bridge h5 { font-size: 18px; }
+  .power-root-bridge th, .power-root-bridge td { padding: 9px 6px; font-size: 12px; }
+  .power-root-directions { flex-direction: column; }
+  .power-root-calculation, .power-root-rule, .power-root-current { padding: 13px 11px; }
   .intuition-intro { padding: 20px 15px 15px; }
   .intuition-tabs { padding: 0 12px 15px; gap: 6px; }
   .intuition-tabs button { padding: 10px 6px; font-size: 12px; }
